@@ -94,8 +94,8 @@ final class PackPipeline implements AutoCloseable {
 	}
 
 	/**
-	 * The second vertex binding of a {@link Kind#MESH} pipeline: one record per draw, advanced per
-	 * instance, holding what a vertex input the bound format has not got reads.
+	 * The second vertex binding of a {@link Kind#MESH} pipeline: one record per vertex, advanced per
+	 * vertex, holding what a vertex input the bound format has not got reads.
 	 */
 	static final class Constants {
 		static final int STRIDE = 112;
@@ -366,7 +366,7 @@ final class PackPipeline implements AutoCloseable {
 			boolean constants = this.kind == Kind.MESH;
 			VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(constants ? 2 : 1, stack);
 			binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
-			if (constants) binding.get(1).binding(1).stride(Constants.STRIDE).inputRate(VK_VERTEX_INPUT_RATE_INSTANCE);
+			if (constants) binding.get(1).binding(1).stride(Constants.STRIDE).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
 			VkVertexInputAttributeDescription.Buffer attributeInfo = VkVertexInputAttributeDescription.calloc(attributes.size(), stack);
 			for (int i = 0; i < attributes.size(); i++) {
 				int[] attribute = attributes.get(i);

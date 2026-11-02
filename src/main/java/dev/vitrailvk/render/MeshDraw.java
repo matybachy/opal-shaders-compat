@@ -90,17 +90,23 @@ final class MeshDraw {
 		return slice;
 	}
 
-	/** One instance-rate record answers attributes absent from the game's vertex format. */
-	static FrameArena.Slice constants(FrameArena arena, DrawIds ids, float lineWidth) {
-		FrameArena.Slice slice = arena.allocate(PackPipeline.Constants.STRIDE);
+	/** A record per vertex preserves identifiers even when the game combines entities in one batch. */
+	// TODO-VERIFY: validate per-vertex identifier lanes and missing attribute defaults in live shaders.
+	static FrameArena.Slice constants(FrameArena arena, DrawIds[] identifiers, int count, float lineWidth) {
+		int stride = PackPipeline.Constants.STRIDE;
+		FrameArena.Slice slice = arena.allocate(Math.multiplyExact(stride, count));
 		ByteBuffer out = slice.bytes();
-		for (int i = 0; i < PackPipeline.Constants.STRIDE; i++) out.put(i, (byte) 0);
-		for (int i = 0; i < 4; i++) out.putFloat(PackPipeline.Constants.COLOR + i * 4, 1.0F);
-		out.putFloat(PackPipeline.Constants.NORMAL + 8, 1.0F);
-		ids.put(out, PackPipeline.Constants.IDENTIFIERS);
-		out.putFloat(PackPipeline.Constants.TANGENT, 1.0F);
-		out.putFloat(PackPipeline.Constants.TANGENT + 12, 1.0F);
-		out.putFloat(PackPipeline.Constants.LINE_WIDTH, lineWidth);
+		for (int i = 0; i < out.capacity(); i++) out.put(i, (byte) 0);
+		for (int vertex = 0; vertex < count; vertex++) {
+			int base = vertex * stride;
+			for (int i = 0; i < 4; i++) out.putFloat(base + PackPipeline.Constants.COLOR + i * 4, 1.0F);
+			out.putFloat(base + PackPipeline.Constants.NORMAL + 8, 1.0F);
+			DrawIds ids = identifiers != null && vertex < identifiers.length ? identifiers[vertex] : DrawIds.NONE;
+			ids.put(out, base + PackPipeline.Constants.IDENTIFIERS);
+			out.putFloat(base + PackPipeline.Constants.TANGENT, 1.0F);
+			out.putFloat(base + PackPipeline.Constants.TANGENT + 12, 1.0F);
+			out.putFloat(base + PackPipeline.Constants.LINE_WIDTH, lineWidth);
+		}
 		return slice;
 	}
 	int topology() {

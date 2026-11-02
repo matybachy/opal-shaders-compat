@@ -355,7 +355,7 @@ public final class PackRenderer implements AutoCloseable {
 		var shader = RenderSystem.getShader();
 		if (shader == null) return false;
 		try {
-			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(), DrawIds.NONE, RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
+			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(), ((MeshIds) (Object) mesh).vitrailvk$ids(), RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
 		} catch (RuntimeException e) {
 			fail(e);
 			return false;
@@ -368,7 +368,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
 		if (phase() != Families.Phase.SKY && phase() != Families.Phase.CLOUDS) return false;
 		try {
-			return active.meshLayer(state, vertices, indices, shader, DrawIds.NONE, view, projection);
+			return active.meshLayer(state, vertices, indices, shader, null, view, projection);
 		} catch (RuntimeException e) {
 			fail(e);
 			return false;
@@ -585,7 +585,7 @@ public final class PackRenderer implements AutoCloseable {
 	/** Records a prepared immediate mesh into the pack targets once its program and outputs exist. */
 	// TODO-VERIFY: validate mesh pipeline state, target transitions and draw transforms in a live frame.
 	private boolean meshLayer(MeshData.DrawState state, ByteBuffer vertices, ByteBuffer indices, String shader,
-			DrawIds ids, Matrix4fc view, Matrix4fc projection) {
+			DrawIds[] identifiers, Matrix4fc view, Matrix4fc projection) {
 		if (!this.frameOpen || this.targets == null || VRenderSystem.stencilTest || VRenderSystem.logicOp) return false;
 		var blend = PipelineState.blendInfo;
 		if (blend.enabled && (blend.blendOpRgb != VK_BLEND_OP_ADD || blend.blendOpAlpha != VK_BLEND_OP_ADD)) return false;
@@ -603,7 +603,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (outputs.isEmpty()) return false;
 		MeshDraw draw = MeshDraw.copy(this.meshArena, state, vertices, indices);
 		if (draw == null) return true;
-		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, ids, RenderSystem.getShaderLineWidth());
+		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, identifiers, state.vertexCount(), RenderSystem.getShaderLineWidth());
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
