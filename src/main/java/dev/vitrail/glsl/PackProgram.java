@@ -12,6 +12,7 @@ import dev.vitrail.pack.program.ChainFilter;
 import dev.vitrail.pack.program.ProgramResolver;
 import dev.vitrail.pack.program.ProgramSet;
 import dev.vitrail.pack.model.ProgramStage;
+import dev.vitrail.pack.model.ProgramNames;
 import dev.vitrail.pack.program.TerrainPass;
 import dev.vitrail.pack.source.DimensionSet;
 import dev.vitrail.pack.source.IncludeExpander.ExpandedUnit;
@@ -398,6 +399,28 @@ public final class PackProgram {
 		}
 	}
 
+	// VitrailVK: shadow composites have their own target schedule and must not enter the main chain.
+	// TODO-VERIFY: confirm dimension and program-toggle behavior with running shader packs.
+	/** Translates the enabled shadow composite graphics programs of this place in slot order. */
+	public static Map<String, Loaded> loadShadowComposites(OpenedPack pack, String place) throws IOException {
+		ShaderPackSource source = pack.source();
+		Reading reading = reading(pack, place);
+		DimensionSet dimensions = DimensionSet.discover(source);
+		ProgramSet programs = ProgramSet.enumerate(source, dimensions);
+		Set<String> disabled = pack.properties().switchedOff(pack.settings().globalDefines(pack.options()), pack.options());
+		Map<String, Loaded> loaded = new LinkedHashMap<>();
+		for (ProgramSet.ProgramKey key : ProgramSet.sorted(programs.fragmentsOf(place), ProgramNames::frameRank)) {
+			if (!ProgramNames.shadowComposite(key.name().family())) continue;
+			String name = key.name().baseName();
+			String path = pathOf(place, name);
+			if (disabled.contains(path)) continue;
+			Map<ProgramStage, ExpandedUnit> units = read(source, reading.expander(), path);
+			if (!units.containsKey(ProgramStage.VERTEX) || !units.containsKey(ProgramStage.FRAGMENT)) continue;
+			ProgramTranslator.TranslatedProgram translated = translate(path, units, reading.textures().volumes());
+			loaded.put(name, bind(source.packName(), path, translated, reading.targets(), AlphaTest.OFF, reading.textures()));
+		}
+		return Collections.unmodifiableMap(loaded);
+	}
 	/**
 	 * A compute-only program, translated, with everything its dispatch has to be sized from.
 	 * <p>
