@@ -33,12 +33,14 @@ final class ShadowMaps implements AutoCloseable {
 	private final Map<Integer, VulkanImage> colours = new TreeMap<>();
 	private final Map<Integer, VulkanImage> alternateColours = new TreeMap<>();
 	private final Set<Integer> flipped = new HashSet<>();
+	private final Set<Integer> mipmapped;
 	private final List<PackDirectives.ShadowColour> directives;
 	private final long[] compareSamplers = new long[2];
 
 	ShadowMaps(int resolution, Set<Integer> named, List<PackDirectives.ShadowColour> directives,
-			List<PackDirectives.ShadowDepth> depths) {
+			List<PackDirectives.ShadowDepth> depths, Set<Integer> mipmapped) {
 		this.resolution = resolution;
+		this.mipmapped = Set.copyOf(mipmapped);
 		this.directives = directives;
 		int usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 				| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -147,7 +149,9 @@ final class ShadowMaps implements AutoCloseable {
 	private VulkanImage createColour(int index) {
 		TargetFormat format = index < this.directives.size()
 				? this.directives.get(index).format().used() : TargetFormat.RGBA8_UNORM;
+		int levels = this.mipmapped.contains(index) ? Integer.SIZE - Integer.numberOfLeadingZeros(this.resolution) : 1;
 		return VulkanImage.builder(this.resolution, this.resolution)
+				.setMipLevels(levels).setLevelViews(levels > 1)
 				.setFormat(PackTargets.vkFormat(format))
 				.setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 						| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT

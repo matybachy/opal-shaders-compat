@@ -1373,9 +1373,8 @@ public final class TargetPlan {
 		}
 
 		if (!draft.shadowComposites.isEmpty()) {
-			notes.add("shadow composites skipped, they draw full screen over the shadow colour "
-					+ "buffers on a flip counter of their own and this engine runs no stage there, "
-					+ "so their draw buffers name no colour target of this place: "
+			// VitrailVK: the renderer executes these on its independent shadow target schedule.
+			notes.add("shadow composites handled by the separate shadow stage: "
 					+ draft.shadowComposites);
 		}
 

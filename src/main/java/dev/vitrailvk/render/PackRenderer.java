@@ -144,6 +144,7 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<String, PackPipeline> shadowCompositePipelines = new LinkedHashMap<>();
 	private final Map<String, UniformBlock> shadowCompositeBlocks = new HashMap<>();
 	private final Map<String, Map<Integer, Boolean>> shadowFlips = new HashMap<>();
+	private final Map<String, String> viewportScales = new HashMap<>();
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
 	private final Map<TerrainPass, UniformBlock> terrainBlocks = new EnumMap<>(TerrainPass.class);
 	private final RenderPasses renderPasses = new RenderPasses();
@@ -182,6 +183,7 @@ public final class PackRenderer implements AutoCloseable {
 		try {
 			this.packName = this.opened.source().packName();
 			this.values = PackValues.read(this.opened, dimension);
+			this.viewportScales.putAll(this.opened.properties().viewportScales(this.opened.settings().globalDefines(this.opened.options())));
 			this.values.convention(ClipSpace.FORWARD);
 			// TODO-VERIFY: verify entity and particle coverage, including fallback draws, in a live frame.
 			ChainPlan.Families families = new ChainPlan.Families(terrainMesh, true, true, false);
@@ -236,8 +238,10 @@ public final class PackRenderer implements AutoCloseable {
 			// What Iris binds when the resource pack ships no normal or specular map: a flat normal, nothing.
 			this.flatNormal = uploaded(1, 1, new byte[] {(byte) 127, (byte) 127, (byte) 255, (byte) 255}, true);
 			this.noSpecular = uploaded(1, 1, new byte[] {0, 0, 0, 0}, true);
+			Set<Integer> shadowMipmapped = new HashSet<>();
+			for (String name : this.shadowComposites.keySet()) shadowMipmapped.addAll(shadowMips(name));
 			this.shadow = new ShadowMaps(this.values.shadowResolution(), shadowNamed(), this.values.shadowColours(),
-					this.values.shadowDepths());
+					this.values.shadowDepths(), shadowMipmapped);
 			for (PackProgram.Loaded loaded : this.shadowComposites.values()) {
 				for (int index : shadowWrites(loaded)) this.shadow.alternateColour(index);
 			}
@@ -287,7 +291,13 @@ public final class PackRenderer implements AutoCloseable {
 	/** Every shadow colour the pack samples or a shadow program writes. */
 	private Set<Integer> shadowNamed() {
 		Set<Integer> named = new HashSet<>(this.chain.targets().shadowAllocated());
-		for (PackProgram.Loaded loaded : this.shadowComposites.values()) named.addAll(shadowWrites(loaded));
+		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+			named.addAll(shadowWrites(entry.getValue()));
+			named.addAll(shadowMips(entry.getKey()));
+			for (SamplerPlan.Binding binding : entry.getValue().samplers().bindings()) {
+				if (binding.kind() == SamplerPlan.Kind.SHADOW_COLOUR) named.add(binding.index());
+			}
+		}
 		if (this.terrain != null) {
 			for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
 				if (entry.getKey().shadow()) named.addAll(shadowWrites(entry.getValue()));
@@ -1024,12 +1034,16 @@ public final class PackRenderer implements AutoCloseable {
 		List<Integer> formats = outputs.stream().map(image -> image.format).toList();
 		long renderPass = this.renderPasses.renderPass(formats, this.shadow.depthFormat(), true);
 		long[] views = new long[outputs.size() + 1];
-		for (int i = 0; i < outputs.size(); i++) views[i] = outputs.get(i).getImageView();
+		for (int i = 0; i < outputs.size(); i++) views[i] = attachmentView(outputs.get(i));
 		views[outputs.size()] = attachmentView(this.shadow.depth());
 		int size = this.shadow.resolution();
 		long framebuffer = this.renderPasses.framebuffer(renderPass, views, size, size);
 		beginPass(cmd, stack, renderPass, framebuffer, size, size, false);
 		return renderPass;
+	}
+
+	private Set<Integer> shadowMips(String name) {
+		return this.chain.targets().directives().mipmapRequests().getOrDefault(name, Set.of());
 	}
 
 	/** Shadow composites have their own flip counter, independent of the main colour chain. */
@@ -1050,6 +1064,12 @@ public final class PackRenderer implements AutoCloseable {
 				continue;
 			}
 			List<Integer> writes = shadowWrites(entry.getValue());
+			for (int index : shadowMips(name)) {
+				VulkanImage image = this.shadow.sampledColour(index);
+				PackDirectives.ShadowColour directive = this.shadow.directive(index);
+				int filter = directive != null && directive.format().used().integer() ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+				if (image.mipLevels > 1) mipChain(cmd, stack, image, VK_IMAGE_ASPECT_COLOR_BIT, filter);
+			}
 			List<VulkanImage> outputs = writes.stream().map(this.shadow::nextColour).toList();
 			long set = allocateSet(stack, this.pool, pipeline.setLayout());
 			writeDescriptors(stack, set, pipeline, entry.getValue(), this.shadowCompositeBlocks.get(name), outputs, null, null);
@@ -1060,6 +1080,7 @@ public final class PackRenderer implements AutoCloseable {
 			PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false, false,
 					VK_COMPARE_OP_ALWAYS, VK_CULL_MODE_NONE, 0xF, false, List.of(PackPipeline.Blend.OFF));
 			beginPass(cmd, stack, pass, framebuffer, size, size, false);
+			applyViewport(cmd, stack, name, size, size);
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(pass, outputs.size(), style));
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
 			vkCmdBindVertexBuffers(cmd, 0, stack.longs(this.quad.handle()), stack.longs(0));
@@ -1277,11 +1298,30 @@ public final class PackRenderer implements AutoCloseable {
 		PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false, false,
 				VK_COMPARE_OP_ALWAYS, VK_CULL_MODE_NONE, 0xF, false, blends);
 		beginPass(cmd, stack, renderPass, framebuffer, width, height, toScreen);
+		if (!toScreen) applyViewport(cmd, stack, pass.program(), width, height);
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(renderPass, outputs.size(), style));
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
 		vkCmdBindVertexBuffers(cmd, 0, stack.longs(this.quad.handle()), stack.longs(0));
 		vkCmdDraw(cmd, 6, 1, 0, 0);
 		vkCmdEndRenderPass(cmd);
+	}
+
+	// TODO-VERIFY: confirm scale and offsets on packs that render partial shadow/main targets.
+	private void applyViewport(VkCommandBuffer cmd, MemoryStack stack, String name, int width, int height) {
+		String declared = this.viewportScales.get(name);
+		if (declared == null) return;
+		try {
+			String[] parts = declared.split("\\s+");
+			float scale = Float.parseFloat(parts[0]);
+			float x = parts.length > 1 ? Float.parseFloat(parts[1]) : 0;
+			float y = parts.length > 1 ? Float.parseFloat(parts[2]) : 0;
+			if (!Float.isFinite(scale) || !Float.isFinite(x) || !Float.isFinite(y)
+					|| scale <= 0 || x < 0 || y < 0 || x + scale > 1 || y + scale > 1) throw new IllegalArgumentException();
+			vkCmdSetViewport(cmd, 0, VkViewport.calloc(1, stack).x((int) (width * x)).y((int) (height * y))
+					.width(Math.max(1, (int) (width * scale))).height(Math.max(1, (int) (height * scale))).minDepth(0).maxDepth(1));
+		} catch (IllegalArgumentException | IndexOutOfBoundsException e) {
+			if (this.warned.add("scale:" + name)) VitrailVk.LOGGER.warn("[pack] invalid scale.{}={}", name, declared);
+		}
 	}
 
 	/** The swapchain is shown row 0 first; the pack's targets keep row 0 at the bottom. */
