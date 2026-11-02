@@ -5,6 +5,11 @@ import dev.vitrailvk.render.Families;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.minecraft.client.Camera;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.ItemInHandRenderer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import org.joml.Matrix4f;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
@@ -33,4 +38,11 @@ public abstract class GameRendererMixin {
 		} finally {
 			PackRenderer.popPhase();
 		}
+	}
+	// TODO-VERIFY: suppress only vanilla's duplicate hands, keeping screen effects, when both pack passes ran.
+	@WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
+			target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;Lnet/minecraft/client/player/LocalPlayer;I)V"))
+	private void vitrailvk$skipVanillaHands(ItemInHandRenderer renderer, float tick, PoseStack poses,
+			MultiBufferSource.BufferSource buffers, LocalPlayer player, int light, Operation<Void> original) {
+		if (!PackRenderer.handsHandled()) original.call(renderer, tick, poses, buffers, player, light);
 	}}

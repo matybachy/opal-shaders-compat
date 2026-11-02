@@ -70,4 +70,18 @@ public abstract class LevelRendererMixin {
 		} finally {
 			PackRenderer.popPhase();
 		}
+	}
+	// TODO-VERIFY: both translucent branches must invoke this once per live frame.
+	@Inject(method = "renderLevel", at = @At(value = "INVOKE",
+			target = "Lnet/minecraft/client/renderer/RenderType;translucent()Lnet/minecraft/client/renderer/RenderType;"))
+	private void vitrailvk$solidHand(DeltaTracker tick, boolean outline, Camera camera, GameRenderer game,
+			LightTexture light, Matrix4f view, Matrix4f projection, CallbackInfo ci) {
+		PackRenderer.renderSolidHand(camera, game, tick.getGameTimeDeltaPartialTick(true));
+	}
+
+	// TODO-VERIFY: verify this return occurs after deferred and before the final pass for each graphics mode.
+	@Inject(method = "renderLevel", at = @At("RETURN"))
+	private void vitrailvk$translucentHand(DeltaTracker tick, boolean outline, Camera camera, GameRenderer game,
+			LightTexture light, Matrix4f view, Matrix4f projection, CallbackInfo ci) {
+		PackRenderer.renderTranslucentHand(camera, game, tick.getGameTimeDeltaPartialTick(true));
 	}}

@@ -124,6 +124,8 @@ public final class PackRenderer implements AutoCloseable {
 	private static String failedKey;
 	private static boolean failedDuringFrame;
 	private static boolean drawingLevel;
+	private static boolean solidHandIssued;
+	private static boolean handsHandled;
 	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
 	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
 	private static long frameSerial;
@@ -319,6 +321,8 @@ public final class PackRenderer implements AutoCloseable {
 	public static void beginLevel(Matrix4fc modelView, Matrix4fc projection) {
 		if (failedDuringFrame) return;
 		drawingLevel = true;
+		solidHandIssued = false;
+		handsHandled = false;
 		LevelCapture.capture(modelView, projection);
 		ensureLoaded();
 		if (active != null) {
@@ -362,7 +366,7 @@ public final class PackRenderer implements AutoCloseable {
 			if (kind == DrawIds.Kind.BLOCK_ENTITY) current = Families.Phase.BLOCK_ENTITIES;
 			else if (kind != DrawIds.Kind.ENTITY) return false;
 		} else if (current != Families.Phase.SKY && current != Families.Phase.PARTICLES
-				&& current != Families.Phase.WEATHER && current != Families.Phase.CLOUDS) return false;
+				&& current != Families.Phase.WEATHER && current != Families.Phase.CLOUDS && current != Families.Phase.HAND) return false;
 		var shader = RenderSystem.getShader();
 		if (shader == null) return false;
 		try {
@@ -393,6 +397,39 @@ public final class PackRenderer implements AutoCloseable {
 			fail(e);
 			return false;
 		}
+	}
+	/** Called at the start of vanilla's translucent stage. */
+	// TODO-VERIFY: verify both NeoForge transparency branches and hand ordering at runtime.
+	public static void renderSolidHand(net.minecraft.client.Camera camera, net.minecraft.client.renderer.GameRenderer game, float tick) {
+		if (active == null || failedDuringFrame || !active.frameOpen || solidHandIssued) return;
+		try {
+			HandPass.render(camera, game, tick, true);
+			solidHandIssued = true;
+		} catch (RuntimeException e) {
+			fail(e);
+		}
+	}
+
+	/** Called at level return, after the translucent world and before the pack final. */
+	// TODO-VERIFY: validate depth copy, deferred ordering and vanilla hand suppression in a live frame.
+	public static void renderTranslucentHand(net.minecraft.client.Camera camera, net.minecraft.client.renderer.GameRenderer game, float tick) {
+		if (active == null || failedDuringFrame || !solidHandIssued) return;
+		try {
+			Renderer renderer = Renderer.getInstance();
+			VkCommandBuffer cmd = Renderer.getCommandBuffer();
+			try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+				renderer.endRenderPass(cmd);
+				active.deferred(cmd, stack);
+			}
+			HandPass.render(camera, game, tick, false);
+			handsHandled = !failedDuringFrame;
+		} catch (RuntimeException e) {
+			fail(e);
+		}
+	}
+
+	public static boolean handsHandled() {
+		return handsHandled && active != null && !failedDuringFrame;
 	}
 	/** After {@code GameRenderer.renderLevel}, before the GUI. */
 	public static void afterLevel() {

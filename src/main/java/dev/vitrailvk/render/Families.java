@@ -51,7 +51,10 @@ public final class Families {
 			};
 			return new Piece(program, AlphaTest.NON_ZERO, VertexInputs.GLYPH, names);
 		}
-		if (shader.equals("particle")) {
+		if (phase == Phase.HAND) {
+			return mesh(HandPass.opaque() ? "gbuffers_hand" : "gbuffers_hand_water",
+					AlphaTest.ONE_TENTH);
+		}		if (shader.equals("particle")) {
 			if (phase == Phase.WEATHER) {
 				return new Piece("gbuffers_weather", AlphaTest.ONE_TENTH, VertexInputs.PARTICLE, VertexInputs.PARTICLE.elements());
 			}

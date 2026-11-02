@@ -31,6 +31,10 @@ public final class HandPass {
 		return active;
 	}
 
+	public static boolean opaque() {
+		return solid;
+	}
+
 	public static boolean skip(ItemStack stack) {
 		boolean translucent = stack.getItem() instanceof BlockItem block
 				&& ItemBlockRenderTypes.getChunkRenderType(block.getBlock().defaultBlockState()) == RenderType.translucent();
