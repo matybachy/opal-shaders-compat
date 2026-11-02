@@ -7,6 +7,8 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 import java.nio.LongBuffer;
+import java.util.Map;
+import java.util.HashMap;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -16,14 +18,17 @@ public final class PackImage extends VulkanImage {
 	private final long memory;
 	private final long packSampler;
 	private final int depth;
+	private final int dimensions;
+	private final Map<Integer, Long> views = new HashMap<>();
 	private boolean retired;
 	private boolean freed;
 
-	private PackImage(long image, long memory, long view, long sampler, int format, int width, int height, int depth, int usage) {
+	private PackImage(long image, long memory, long view, long sampler, int format, int width, int height, int depth, int usage, int dimensions) {
 		super(image, format, 1, width, height, 0, usage, view);
 		this.memory = memory;
 		this.packSampler = sampler;
 		this.depth = depth;
+		this.dimensions = dimensions;
 	}
 
 	// TODO-VERIFY: verify volume/lookup uploads and lifecycle alongside VMR's in-flight frames.
@@ -36,6 +41,7 @@ public final class PackImage extends VulkanImage {
 		long image = 0, memory = 0, view = 0, sampler = 0;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkImageCreateInfo info = VkImageCreateInfo.calloc(stack).sType$Default().imageType(dimensions - 1)
+					.flags(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT)
 					.format(format).mipLevels(1).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
 					.tiling(VK_IMAGE_TILING_OPTIMAL).usage(usage).sharingMode(VK_SHARING_MODE_EXCLUSIVE)
 					.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
@@ -62,7 +68,7 @@ public final class PackImage extends VulkanImage {
 					.addressModeU(address).addressModeV(address).addressModeW(address).maxLod(0);
 			Vk.check(vkCreateSampler(Vk.device(), sample, null, handle), "vkCreateSampler(pack)");
 			sampler = handle.get(0);
-			return new PackImage(image, memory, view, sampler, format, width, height, depth, usage);
+			return new PackImage(image, memory, view, sampler, format, width, height, depth, usage, dimensions);
 		} catch (RuntimeException | Error failure) {
 			if (sampler != 0) vkDestroySampler(Vk.device(), sampler, null);
 			if (view != 0) vkDestroyImageView(Vk.device(), view, null);
@@ -73,6 +79,20 @@ public final class PackImage extends VulkanImage {
 	}
 
 	public int depth() { return this.depth; }
+
+	public long view(int format) {
+		if (format == this.format) return getImageView();
+		return this.views.computeIfAbsent(format, requested -> {
+			try (MemoryStack stack = MemoryStack.stackPush()) {
+				VkImageViewCreateInfo info = VkImageViewCreateInfo.calloc(stack).sType$Default()
+						.image(getId()).viewType(this.dimensions - 1).format(requested);
+				info.subresourceRange().aspectMask(this.aspect).levelCount(1).layerCount(1);
+				LongBuffer handle = stack.mallocLong(1);
+				Vk.check(vkCreateImageView(Vk.device(), info, null, handle), "pack image typed view");
+				return handle.get(0);
+			}
+		});
+	}
 
 	/** Upload during pack loading; wait for this transfer before releasing its staging allocation. */
 	public void upload(byte[] pixels) {
@@ -112,6 +132,8 @@ public final class PackImage extends VulkanImage {
 	public void doFree() {
 		if (this.freed) return;
 		this.freed = true;
+		this.views.values().forEach(view -> vkDestroyImageView(Vk.device(), view, null));
+		this.views.clear();
 		vkDestroySampler(Vk.device(), this.packSampler, null);
 		vkDestroyImageView(Vk.device(), getImageView(), null);
 		vkDestroyImage(Vk.device(), getId(), null);

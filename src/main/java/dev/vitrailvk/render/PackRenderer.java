@@ -146,6 +146,7 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<String, Map<Integer, Boolean>> shadowFlips = new HashMap<>();
 	private final Map<String, String> viewportScales = new HashMap<>();
 	private TextureImages textureImages;
+	private PackStorage storage;
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
 	private final Map<TerrainPass, UniformBlock> terrainBlocks = new EnumMap<>(TerrainPass.class);
 	private final RenderPasses renderPasses = new RenderPasses();
@@ -240,6 +241,7 @@ public final class PackRenderer implements AutoCloseable {
 			this.flatNormal = uploaded(1, 1, new byte[] {(byte) 127, (byte) 127, (byte) 255, (byte) 255}, true);
 			this.noSpecular = uploaded(1, 1, new byte[] {0, 0, 0, 0}, true);
 			this.textureImages = new TextureImages(this.opened);
+			this.storage = new PackStorage(this.opened);
 			Set<Integer> shadowMipmapped = new HashSet<>();
 			for (String name : this.shadowComposites.keySet()) shadowMipmapped.addAll(shadowMips(name));
 			this.shadow = new ShadowMaps(this.values.shadowResolution(), shadowNamed(), this.values.shadowColours(),
@@ -258,6 +260,7 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private void closePartly() {
+		if (this.storage != null) this.storage.close();
 		if (this.textureImages != null) this.textureImages.close();
 		if (this.meshPrograms != null) this.meshPrograms.close();
 		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
@@ -606,6 +609,7 @@ public final class PackRenderer implements AutoCloseable {
 			this.renderPasses.forgetFramebuffers();
 			freeTargets();
 			this.targets = new PackTargets(this.chain.targets(), screen.width, screen.height);
+			this.storage.resize(cmd, screen.width, screen.height);
 			int usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 					| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 			this.depth = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
@@ -625,6 +629,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.ubo.rewind();
 
 		clearTargets(cmd, stack);
+		this.storage.beginFrame(cmd, stack);
 		clearShadowMaps(cmd, stack);
 		runPasses(cmd, stack, this.chain.chain().beginEnd());
 	}
@@ -1058,14 +1063,6 @@ public final class PackRenderer implements AutoCloseable {
 		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
 			String name = entry.getKey();
 			PackPipeline pipeline = this.shadowCompositePipelines.get(name);
-			// Do not issue a draw with an unbound storage descriptor while item 6 is pending.
-			if (pipeline.slots.stream().anyMatch(slot -> slot.type() != SpirvModule.UNIFORM_BUFFER
-					&& slot.type() != SpirvModule.COMBINED_IMAGE_SAMPLER)) {
-				if (this.warned.add("shadowcomp-storage:" + name)) {
-					VitrailVk.LOGGER.warn("[pack] {} needs storage descriptors; shadow composite skipped", name);
-				}
-				continue;
-			}
 			List<Integer> writes = shadowWrites(entry.getValue());
 			for (int index : shadowMips(name)) {
 				VulkanImage image = this.shadow.sampledColour(index);
@@ -1347,6 +1344,16 @@ public final class PackRenderer implements AutoCloseable {
 			UniformBlock block, List<VulkanImage> outputs, VulkanImage atlas, VulkanImage lightmap) {
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(pipeline.slots.size(), stack);
+		PackStorage.barrier(cmd, stack);
+		Set<VulkanImage> stored = new HashSet<>();
+		for (PackPipeline.Slot slot : pipeline.slots) {
+			if (slot.type() != SpirvModule.STORAGE_IMAGE) continue;
+			VulkanImage image = storageImage(slot.name(), loaded);
+			if (image == null) throw new IllegalStateException("Unbound storage image " + slot.name() + " in " + loaded.path());
+			if (outputs.contains(image)) throw new IllegalStateException("Storage image aliases framebuffer in " + loaded.path());
+			stored.add(image);
+			image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_GENERAL);
+		}
 		int count = 0;
 		for (PackPipeline.Slot slot : pipeline.slots) {
 			VkWriteDescriptorSet write = writes.get(count).sType$Default().dstSet(set).dstBinding(slot.binding())
@@ -1377,22 +1384,31 @@ public final class PackRenderer implements AutoCloseable {
 					if (slot.depth() && image != this.shadow.depth() && image != this.shadow.depthNoTranslucent()) {
 						image = this.shadow.depth();
 					}
-					image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+					int layout = stored.contains(image) ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+					image.transitionImageLayout(stack, cmd, layout);
 					long sampler = slot.depth() ? this.shadow.compare(image) : image.getSampler();
+					long view = this.storage.image(slot.name()) == image ? this.storage.view(slot.name()) : image.getImageView();
 					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
 					for (int i = 0; i < slot.count(); i++) {
-						info.get(i).imageView(image.getImageView()).sampler(sampler)
-								.imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+						info.get(i).imageView(view).sampler(sampler).imageLayout(layout);
 					}
 					write.pImageInfo(info);
 				}
-				default -> {
-					if (this.warned.add(pipeline.name + ":" + slot.name())) {
-						VitrailVk.LOGGER.warn("[pack] {}: descriptor {} of type {} is not served yet", pipeline.name,
-								slot.name(), slot.type());
-					}
-					continue;
+				case SpirvModule.STORAGE_IMAGE -> {
+					VulkanImage image = storageImage(slot.name(), loaded);
+					long view = this.storage.image(slot.name()) == image ? this.storage.view(slot.name()) : attachmentView(image);
+					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
+					for (int i = 0; i < slot.count(); i++) info.get(i).imageView(view).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
+					write.pImageInfo(info);
 				}
+				case SpirvModule.STORAGE_BUFFER -> {
+					var buffer = this.storage.buffer(slot.name());
+					if (buffer == null) throw new IllegalStateException("Unbound SSBO " + slot.name() + " in " + loaded.path());
+					VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(slot.count(), stack);
+					for (int i = 0; i < slot.count(); i++) info.get(i).buffer(buffer.handle()).offset(0).range(buffer.size());
+					write.pBufferInfo(info);
+				}
+				default -> throw new IllegalStateException("Unsupported descriptor " + slot.name() + " in " + loaded.path());
 			}
 			count++;
 		}
@@ -1400,10 +1416,23 @@ public final class PackRenderer implements AutoCloseable {
 		vkUpdateDescriptorSets(Vk.device(), writes, null);
 	}
 
+	private VulkanImage storageImage(String name, PackProgram.Loaded loaded) {
+		VulkanImage image = this.storage.image(name);
+		if (image != null) return image;
+		SamplerPlan.Binding binding = loaded.samplers().binding(name);
+		if (binding != null && binding.kind() == SamplerPlan.Kind.COLOUR_IMAGE) {
+			PackTargets.Target target = this.targets.target(binding.index());
+			return target == null ? null : target.image(binding.side());
+		}
+		return null;
+	}
+
 	private VulkanImage sampled(String sampler, PackProgram.Loaded loaded, List<VulkanImage> outputs,
 			VulkanImage atlas, VulkanImage lightmap) {
 		String program = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
 		VulkanImage custom = this.textureImages.resolve(program, sampler);
+		if (custom != null) return custom;
+		custom = this.storage.image(sampler);
 		if (custom != null) return custom;
 		if (atlas != null && ATLAS.contains(sampler)) return atlas;
 		if (lightmap != null && LIGHTMAP.equals(sampler)) return lightmap;
@@ -1509,6 +1538,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	@Override
 	public void close() {
+		if (this.storage != null) this.storage.close();
 		if (this.textureImages != null) this.textureImages.close();
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.pipelines.clear();
