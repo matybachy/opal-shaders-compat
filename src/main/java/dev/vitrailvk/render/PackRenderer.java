@@ -361,15 +361,17 @@ public final class PackRenderer implements AutoCloseable {
 		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
 		Families.Phase current = phase();
 		DrawIds[] ids = ((MeshIds) (Object) mesh).vitrailvk$ids();
+		boolean mixed = false;
 		if (current == Families.Phase.LEVEL && drawingLevel) {
 			DrawIds.Kind kind = homogeneousKind(ids, mesh.drawState().vertexCount());
 			if (kind == DrawIds.Kind.BLOCK_ENTITY) current = Families.Phase.BLOCK_ENTITIES;
-			else if (kind != DrawIds.Kind.ENTITY) return false;
+			else if (kind != DrawIds.Kind.ENTITY) mixed = true;
 		} else if (current != Families.Phase.SKY && current != Families.Phase.PARTICLES
 				&& current != Families.Phase.WEATHER && current != Families.Phase.CLOUDS && current != Families.Phase.HAND) return false;
 		var shader = RenderSystem.getShader();
 		if (shader == null) return false;
 		try {
+			if (mixed) return active.mixedMesh(mesh, ids, shader.getName());
 			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(),
 					ids, current, RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
 		} catch (RuntimeException e) {
@@ -377,13 +379,42 @@ public final class PackRenderer implements AutoCloseable {
 			return false;
 		}
 	}
-	/** A mixed batch needs distinct programs and remains with the game until it can be split. */
+	/** Returns the one category when every vertex belongs to it; mixed batches are split below. */
 	private static DrawIds.Kind homogeneousKind(DrawIds[] ids, int count) {
 		if (ids == null || ids.length != count || count == 0) return DrawIds.Kind.NONE;
 		DrawIds.Kind kind = ids[0].kind();
 		if (kind == DrawIds.Kind.NONE) return kind;
 		for (int i = 1; i < count; i++) if (ids[i].kind() != kind) return DrawIds.Kind.NONE;
 		return kind;
+	}
+	// TODO-VERIFY: check sorted mixed batches and render-order preservation with real modded geometry.
+	private boolean mixedMesh(MeshData mesh, DrawIds[] ids, String shader) {
+		List<MixedMesh.Run> runs = MixedMesh.split(mesh, ids);
+		if (!this.frameOpen || this.targets == null || runs.isEmpty() || PipelineState.blendInfo.enabled
+				&& (PipelineState.blendInfo.blendOpRgb != VK_BLEND_OP_ADD || PipelineState.blendInfo.blendOpAlpha != VK_BLEND_OP_ADD)
+				|| VRenderSystem.stencilTest || VRenderSystem.logicOp) return false;
+		MeshData.DrawState original = mesh.drawState();
+		// Resolve every run first, so an unsupported family leaves the whole mesh to the game.
+		for (MixedMesh.Run run : runs) {
+			Families.Phase phase = run.kind() == DrawIds.Kind.BLOCK_ENTITY ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL;
+			Families.Piece piece = Families.resolve(shader, original.format(), phase, PipelineState.blendInfo.enabled);
+			if (piece == null) return false;
+			Optional<MeshPrograms.Program> program = this.meshPrograms.resolve(piece, original.format(), this.deferredDone);
+			if (program.isEmpty() || program.get().pass().attachments().isEmpty()) return false;
+			for (ChainPlan.Attachment attachment : program.get().pass().attachments()) {
+				if (this.targets.target(attachment.target()) == null) return false;
+			}
+		}
+		for (MixedMesh.Run run : runs) {
+			Families.Phase phase = run.kind() == DrawIds.Kind.BLOCK_ENTITY ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL;
+			MeshData.DrawState state = new MeshData.DrawState(original.format(), original.vertexCount(), run.count(),
+					com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLES, com.mojang.blaze3d.vertex.VertexFormat.IndexType.INT);
+			if (!meshLayer(state, mesh.vertexBuffer(), run.indices(), shader, ids, phase,
+					RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix())) {
+				throw new IllegalStateException("A preflighted mixed mesh run could not be drawn");
+			}
+		}
+		return true;
 	}
 	/** Draws a captured static vertex buffer while the sky or cloud renderer owns the call. */
 	// TODO-VERIFY: check static VBO draw matrices and upload lifetime in a running VulkanMod frame.
