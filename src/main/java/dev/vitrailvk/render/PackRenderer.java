@@ -115,6 +115,7 @@ public final class PackRenderer implements AutoCloseable {
 	private static PackRenderer active;
 	private static String activeKey;
 	private static String failedKey;
+	private static boolean failedDuringFrame;
 	private static SpirvCompiler compiler;
 
 	private final String packName;
@@ -266,6 +267,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** {@code LevelRenderer.renderLevel} HEAD, on the render thread. */
 	public static void beginLevel(Matrix4fc modelView, Matrix4fc projection) {
+		if (failedDuringFrame) return;
 		LevelCapture.capture(modelView, projection);
 		ensureLoaded();
 		if (active != null) {
@@ -276,7 +278,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** Just before {@code LevelRenderer.renderSky}: what the frame needs ahead of the world. */
 	public static void beforeSky(double camX, double camY, double camZ) {
-		if (active == null) return;
+		if (active == null || failedDuringFrame) return;
 		try {
 			active.openAndShadow(camX, camY, camZ);
 		} catch (RuntimeException e) {
@@ -289,7 +291,7 @@ public final class PackRenderer implements AutoCloseable {
 	 * layer, in which case VulkanMod's own draw is skipped.
 	 */
 	public static boolean drawTerrain(RenderType renderType, double camX, double camY, double camZ) {
-		if (active == null || active.terrain == null) return false;
+		if (active == null || failedDuringFrame || active.terrain == null) return false;
 		try {
 			return active.terrainLayer(renderType, camX, camY, camZ);
 		} catch (RuntimeException e) {
@@ -300,7 +302,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** After {@code GameRenderer.renderLevel}, before the GUI. */
 	public static void afterLevel() {
-		if (active == null) return;
+		if (active == null || failedDuringFrame) return;
 		try {
 			active.finishFrame();
 		} catch (RuntimeException e) {
@@ -317,7 +319,16 @@ public final class PackRenderer implements AutoCloseable {
 	private static void fail(RuntimeException e) {
 		VitrailVk.LOGGER.error("Shader pack {} failed while drawing; turning it off", active.packName, e);
 		failedKey = activeKey;
-		shutDown();
+		// Recorded commands still reference this pack until VulkanMod submits the frame.
+		failedDuringFrame = true;
+	}
+
+	/** Called after VulkanMod finishes or discards the recorded frame. */
+	public static void frameEnded() {
+		if (failedDuringFrame) {
+			shutDown();
+			failedDuringFrame = false;
+		}
 	}
 
 	private static void ensureLoaded() {

@@ -1,6 +1,7 @@
 package dev.vitrailvk.mixin;
 
 import dev.vitrailvk.dev.AutoTest;
+import dev.vitrailvk.render.PackRenderer;
 import net.vulkanmod.vulkan.Renderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -13,6 +14,7 @@ public abstract class RendererMixin {
 
 	@Inject(method = "endFrame", at = @At("RETURN"))
 	private void vitrailvk$countFrame(CallbackInfoReturnable<Boolean> cir) {
+		PackRenderer.frameEnded();
 		if (cir.getReturnValueZ()) {
 			AutoTest.presentedFrames++;
 		}
