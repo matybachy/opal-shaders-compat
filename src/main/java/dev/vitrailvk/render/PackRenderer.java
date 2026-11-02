@@ -122,6 +122,7 @@ public final class PackRenderer implements AutoCloseable {
 	private static String activeKey;
 	private static String failedKey;
 	private static boolean failedDuringFrame;
+	private static boolean drawingLevel;
 	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
 	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
 	private static long frameSerial;
@@ -313,6 +314,7 @@ public final class PackRenderer implements AutoCloseable {
 	/** {@code LevelRenderer.renderLevel} HEAD, on the render thread. */
 	public static void beginLevel(Matrix4fc modelView, Matrix4fc projection) {
 		if (failedDuringFrame) return;
+		drawingLevel = true;
 		LevelCapture.capture(modelView, projection);
 		ensureLoaded();
 		if (active != null) {
@@ -350,16 +352,30 @@ public final class PackRenderer implements AutoCloseable {
 	public static boolean drawImmediate(MeshData mesh) {
 		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
 		Families.Phase current = phase();
-		if (current != Families.Phase.SKY && current != Families.Phase.PARTICLES
+		DrawIds[] ids = ((MeshIds) (Object) mesh).vitrailvk$ids();
+		if (current == Families.Phase.LEVEL && drawingLevel) {
+			DrawIds.Kind kind = homogeneousKind(ids, mesh.drawState().vertexCount());
+			if (kind == DrawIds.Kind.BLOCK_ENTITY) current = Families.Phase.BLOCK_ENTITIES;
+			else if (kind != DrawIds.Kind.ENTITY) return false;
+		} else if (current != Families.Phase.SKY && current != Families.Phase.PARTICLES
 				&& current != Families.Phase.WEATHER && current != Families.Phase.CLOUDS) return false;
 		var shader = RenderSystem.getShader();
 		if (shader == null) return false;
 		try {
-			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(), ((MeshIds) (Object) mesh).vitrailvk$ids(), RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
+			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(),
+					ids, current, RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
 		} catch (RuntimeException e) {
 			fail(e);
 			return false;
 		}
+	}
+	/** A mixed batch needs distinct programs and remains with the game until it can be split. */
+	private static DrawIds.Kind homogeneousKind(DrawIds[] ids, int count) {
+		if (ids == null || ids.length != count || count == 0) return DrawIds.Kind.NONE;
+		DrawIds.Kind kind = ids[0].kind();
+		if (kind == DrawIds.Kind.NONE) return kind;
+		for (int i = 1; i < count; i++) if (ids[i].kind() != kind) return DrawIds.Kind.NONE;
+		return kind;
 	}
 	/** Draws a captured static vertex buffer while the sky or cloud renderer owns the call. */
 	// TODO-VERIFY: check static VBO draw matrices and upload lifetime in a running VulkanMod frame.
@@ -368,7 +384,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
 		if (phase() != Families.Phase.SKY && phase() != Families.Phase.CLOUDS) return false;
 		try {
-			return active.meshLayer(state, vertices, indices, shader, null, view, projection);
+			return active.meshLayer(state, vertices, indices, shader, null, phase(), view, projection);
 		} catch (RuntimeException e) {
 			fail(e);
 			return false;
@@ -376,6 +392,7 @@ public final class PackRenderer implements AutoCloseable {
 	}
 	/** After {@code GameRenderer.renderLevel}, before the GUI. */
 	public static void afterLevel() {
+		drawingLevel = false;
 		if (active == null || failedDuringFrame) return;
 		try {
 			active.finishFrame();
@@ -585,12 +602,12 @@ public final class PackRenderer implements AutoCloseable {
 	/** Records a prepared immediate mesh into the pack targets once its program and outputs exist. */
 	// TODO-VERIFY: validate mesh pipeline state, target transitions and draw transforms in a live frame.
 	private boolean meshLayer(MeshData.DrawState state, ByteBuffer vertices, ByteBuffer indices, String shader,
-			DrawIds[] identifiers, Matrix4fc view, Matrix4fc projection) {
+			DrawIds[] identifiers, Families.Phase drawPhase, Matrix4fc view, Matrix4fc projection) {
 		if (!this.frameOpen || this.targets == null || VRenderSystem.stencilTest || VRenderSystem.logicOp) return false;
 		var blend = PipelineState.blendInfo;
 		if (blend.enabled && (blend.blendOpRgb != VK_BLEND_OP_ADD || blend.blendOpAlpha != VK_BLEND_OP_ADD)) return false;
-		Families.Piece piece = Families.resolve(shader, state.format(), phase(), blend.enabled);
-		if (piece == null || phase() == Families.Phase.SHADOW) return false;
+		Families.Piece piece = Families.resolve(shader, state.format(), drawPhase, blend.enabled);
+		if (piece == null || drawPhase == Families.Phase.SHADOW) return false;
 		Optional<MeshPrograms.Program> candidate = this.meshPrograms.resolve(piece, state.format(), this.deferredDone);
 		if (candidate.isEmpty()) return false;
 		MeshPrograms.Program program = candidate.get();

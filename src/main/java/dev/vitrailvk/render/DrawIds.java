@@ -13,8 +13,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.nio.ByteBuffer;
 
 /** The three identifiers in the entity vertex input, in the translator's lane order. */
-public record DrawIds(int entity, int blockEntity, int item) {
-	public static final DrawIds NONE = new DrawIds(0, -1, -1);
+public record DrawIds(int entity, int blockEntity, int item, Kind kind) {
+	public enum Kind { NONE, ENTITY, BLOCK_ENTITY }
+	public static final DrawIds NONE = new DrawIds(0, -1, -1, Kind.NONE);
 
 	static DrawIds entity(Entity entity) {
 		int id;
@@ -26,16 +27,16 @@ public record DrawIds(int entity, int blockEntity, int item) {
 		} else {
 			id = PackNameIds.entity(entity.getType());
 		}
-		return new DrawIds(id, -1, -1);
+		return new DrawIds(id, -1, -1, Kind.ENTITY);
 	}
 
 	static DrawIds blockEntity(BlockState state) {
-		return new DrawIds(0, BlockStateIds.id(state), -1);
+		return new DrawIds(0, BlockStateIds.id(state), -1, Kind.BLOCK_ENTITY);
 	}
 
 	DrawIds withItem(ItemStack stack) {
 		return new DrawIds(this.entity, this.blockEntity,
-				stack.isEmpty() ? -1 : PackNameIds.item(BuiltInRegistries.ITEM.getKey(stack.getItem())));
+				stack.isEmpty() ? -1 : PackNameIds.item(BuiltInRegistries.ITEM.getKey(stack.getItem())), this.kind);
 	}
 
 	/** The shader sees Iris's unsigned-short lanes, widened to the pipeline's unsigned integers. */
