@@ -11,6 +11,8 @@
     "ParticleEngineMixin",
     "BufferUploaderMixin",
     "VertexBufferMixin",
+    "EntityRenderDispatcherMixin",
+    "BlockEntityRenderDispatcherMixin",
     "CustomVertexFormatMixin",
     "TerrainBufferBuilderMixin",
     "WorldRendererMixin",

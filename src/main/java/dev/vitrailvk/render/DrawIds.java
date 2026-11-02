@@ -13,7 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.nio.ByteBuffer;
 
 /** The three identifiers in the entity vertex input, in the translator's lane order. */
-record DrawIds(int entity, int blockEntity, int item) {
+public record DrawIds(int entity, int blockEntity, int item) {
 	static final DrawIds NONE = new DrawIds(0, -1, -1);
 
 	static DrawIds entity(Entity entity) {

@@ -38,6 +38,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.vulkanmod.Initializer;
 import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.render.chunk.ChunkArea;
@@ -121,6 +123,7 @@ public final class PackRenderer implements AutoCloseable {
 	private static String failedKey;
 	private static boolean failedDuringFrame;
 	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
+	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
 	private static long frameSerial;
 	private static SpirvCompiler compiler;
 
@@ -276,6 +279,21 @@ public final class PackRenderer implements AutoCloseable {
 	// ----------------------------------------------------------------------------------------------
 	// Hooks
 
+	public static void pushEntity(Entity entity) {
+		drawIds.push(active == null ? DrawIds.NONE : DrawIds.entity(entity));
+	}
+
+	public static void pushBlockEntity(BlockEntity entity) {
+		drawIds.push(active == null ? DrawIds.NONE : DrawIds.blockEntity(entity.getBlockState()));
+	}
+
+	public static void popDrawIds() {
+		drawIds.pop();
+	}
+
+	public static DrawIds currentDrawIds() {
+		return drawIds.isEmpty() ? DrawIds.NONE : drawIds.peek();
+	}
 	public static void pushPhase(Families.Phase phase) {
 		phases.push(phase);
 	}
