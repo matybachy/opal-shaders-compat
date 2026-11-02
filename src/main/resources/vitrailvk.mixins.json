@@ -8,6 +8,7 @@
     "TextureAtlasAccessor",
     "LevelRendererMixin",
     "GameRendererMixin",
+    "ParticleEngineMixin",
     "CustomVertexFormatMixin",
     "TerrainBufferBuilderMixin",
     "WorldRendererMixin",

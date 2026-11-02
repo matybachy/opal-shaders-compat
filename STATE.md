@@ -23,3 +23,4 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - TODO-VERIFY: životnost FrameArena a opakované vykreslení levelu v jednom snímku za běhu.
 - TODO-VERIFY: Vulkanové vazby a životnost MeshDraw za běhu.
 - TODO-VERIFY: fáze oblohy, mraků a počasí včetně rozšíření NeoForge za běhu; zatím nejsou napojeny na mesh draw.
+- TODO-VERIFY: fáze částic a ruky za běhu; rozdělení ruky před/po deferred ještě chybí.
