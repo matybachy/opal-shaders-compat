@@ -1,6 +1,10 @@
 package dev.vitrailvk.mixin;
 
 import dev.vitrailvk.render.PackRenderer;
+import dev.vitrailvk.render.Families;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
@@ -31,4 +35,39 @@ public abstract class LevelRendererMixin {
 		var position = camera.getPosition();
 		PackRenderer.beforeSky(position.x, position.y, position.z);
 	}
-}
+
+	// TODO-VERIFY: verify the phases against NeoForge sky, cloud and weather extensions at runtime.
+	@WrapMethod(method = "renderSky")
+	private void vitrailvk$skyPhase(Matrix4f view, Matrix4f projection, float tick, Camera camera,
+			boolean foggy, Runnable fog, Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.SKY);
+		try {
+			original.call(view, projection, tick, camera, foggy, fog);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}
+
+	// TODO-VERIFY: confirm cloud extension ordering at runtime.
+	@WrapMethod(method = "renderClouds")
+	private void vitrailvk$cloudPhase(PoseStack poses, Matrix4f view, Matrix4f projection, float tick,
+			double x, double y, double z, Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.CLOUDS);
+		try {
+			original.call(poses, view, projection, tick, x, y, z);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}
+
+	// TODO-VERIFY: confirm weather extension ordering at runtime.
+	@WrapMethod(method = "renderSnowAndRain")
+	private void vitrailvk$weatherPhase(LightTexture light, float tick, double x, double y, double z,
+			Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.WEATHER);
+		try {
+			original.call(light, tick, x, y, z);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}}

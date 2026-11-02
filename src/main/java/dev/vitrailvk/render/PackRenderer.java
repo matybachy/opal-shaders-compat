@@ -116,6 +116,7 @@ public final class PackRenderer implements AutoCloseable {
 	private static String activeKey;
 	private static String failedKey;
 	private static boolean failedDuringFrame;
+	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
 	private static long frameSerial;
 	private static SpirvCompiler compiler;
 
@@ -267,6 +268,18 @@ public final class PackRenderer implements AutoCloseable {
 
 	// ----------------------------------------------------------------------------------------------
 	// Hooks
+
+	public static void pushPhase(Families.Phase phase) {
+		phases.push(phase);
+	}
+
+	public static void popPhase() {
+		phases.pop();
+	}
+
+	static Families.Phase phase() {
+		return phases.isEmpty() ? Families.Phase.LEVEL : phases.peek();
+	}
 
 	/** {@code LevelRenderer.renderLevel} HEAD, on the render thread. */
 	public static void beginLevel(Matrix4fc modelView, Matrix4fc projection) {

@@ -12,10 +12,10 @@ import java.util.List;
  * {@code pipeline/programs/ShaderKey}), read by shader name because on VulkanMod Reforged the draw
  * is intercepted where it happens and the game's shader lookups are left alone.
  */
-final class Families {
+public final class Families {
 
 	/** What the level is drawing, set by the mixins around each part of it. */
-	enum Phase { LEVEL, SKY, BLOCK_ENTITIES, HAND, PARTICLES, WEATHER, CLOUDS, SHADOW }
+	public enum Phase { LEVEL, SKY, BLOCK_ENTITIES, HAND, PARTICLES, WEATHER, CLOUDS, SHADOW }
 
 	/**
 	 * @param program the bare program name the pack is asked for
