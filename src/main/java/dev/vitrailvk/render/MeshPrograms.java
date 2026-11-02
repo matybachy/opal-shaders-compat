@@ -20,6 +20,9 @@ final class MeshPrograms implements AutoCloseable {
 	private record Key(Families.Piece piece, VertexFormat format, boolean afterDeferred) {
 	}
 
+	record ShadowProgram(PackProgram.Loaded loaded, PackPipeline pipeline, UniformBlock uniforms) {
+	}
+
 	record Program(PackProgram.Loaded loaded, PackPipeline pipeline, UniformBlock uniforms, ChainPlan.Pass pass) {
 	}
 
@@ -28,6 +31,7 @@ final class MeshPrograms implements AutoCloseable {
 	private final PackValues values;
 	private final SpirvCompiler compiler;
 	private final Map<Key, Optional<Program>> programs = new HashMap<>();
+	private final Map<Key, Optional<ShadowProgram>> shadows = new HashMap<>();
 
 	MeshPrograms(OpenedPack pack, PackProgram.Chain chain, PackValues values, SpirvCompiler compiler) {
 		this.pack = pack;
@@ -40,6 +44,33 @@ final class MeshPrograms implements AutoCloseable {
 		return this.programs.computeIfAbsent(new Key(piece, format, afterDeferred), this::load);
 	}
 
+	Optional<ShadowProgram> resolveShadow(Families.Piece piece, VertexFormat format) {
+		return this.shadows.computeIfAbsent(new Key(piece, format, false), this::loadShadow);
+	}
+
+	// TODO-VERIFY: check shadow entity variants, uniforms and sampler bindings in a live frame.
+	private Optional<ShadowProgram> loadShadow(Key key) {
+		Families.Piece piece = key.piece();
+		PackProgram.GeometryElement element = new PackProgram.GeometryElement("shadowMesh", piece.program(),
+				piece.alpha(), piece.inputs(), piece.bound(), false);
+		PackProgram.Loaded loaded;
+		try {
+			loaded = PackProgram.loadGeometry(this.pack, this.chain.place(), List.of(element)).get("shadowMesh");
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		if (loaded == null) return Optional.empty();
+		loaded = loaded.rebind(this.chain.targets(), Optional.empty());
+		PackPipeline pipeline = new PackPipeline("shadowMesh:" + loaded.path(), loaded.program(), this.compiler,
+				PackPipeline.Kind.MESH, key.format());
+		try {
+			UniformBlock uniforms = new UniformBlock(loaded.program().uniforms(), this.values.shadowGeometryCatalog());
+			return Optional.of(new ShadowProgram(loaded, pipeline, uniforms));
+		} catch (RuntimeException | Error e) {
+			pipeline.close();
+			throw e;
+		}
+	}
 	// TODO-VERIFY: validate translated mesh programs and target halves during an actual frame.
 	private Optional<Program> load(Key key) {
 		Families.Piece piece = key.piece();
@@ -74,5 +105,7 @@ final class MeshPrograms implements AutoCloseable {
 	public void close() {
 		this.programs.values().forEach(program -> program.ifPresent(value -> value.pipeline().close()));
 		this.programs.clear();
+		this.shadows.values().forEach(program -> program.ifPresent(value -> value.pipeline().close()));
+		this.shadows.clear();
 	}
 }
