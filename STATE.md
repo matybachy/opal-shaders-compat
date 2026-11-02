@@ -17,3 +17,4 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - Nic z položek 3 a dál není spuštěné ani vizuálně ověřené (pokyn: netestovat).
 - Stíny: jen sekce zkompilované grafem kamery; `shadowcomp` a depth mipmapy zatím chybí.
 - `centerDepth` bez vyhlazení.
+- `./gradlew build` opraven: licenční soubory jsou explicitní cesty; sestavení prošlo.
