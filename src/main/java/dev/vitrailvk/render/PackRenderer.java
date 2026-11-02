@@ -2,6 +2,7 @@ package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.vitrail.glsl.PackProgram;
+import dev.vitrail.glsl.LegacyGlsl;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.model.BlendMode;
 import dev.vitrail.pack.model.ProgramStage;
@@ -968,11 +969,18 @@ public final class PackRenderer implements AutoCloseable {
 			switch (slot.type()) {
 				case SpirvModule.UNIFORM_BUFFER -> {
 					UniformBlock written = "OfGlobals".equals(slot.name()) ? block : null;
-					int size = written == null ? 256 : Math.max(16, written.size());
+					boolean transforms = LegacyGlsl.GAME_TRANSFORMS.equals(slot.name());
+					int size = written != null ? Math.max(16, written.size()) : transforms ? 160 : 256;
 					long offset = this.ubo.allocate(size);
 					ByteBuffer view = this.ubo.view(offset, size);
 					if (written != null) {
 						written.write(this.std140.into(view), this.values.world());
+					} else if (transforms) {
+						// TODO-VERIFY: confirm the per-draw matrices and color against VulkanMod's live render state.
+						float[] color = RenderSystem.getShaderColor();
+						this.std140.into(view).putMat4(RenderSystem.getModelViewMatrix())
+								.putVec4(color[0], color[1], color[2], color[3]).putVec3(0, 0, 0)
+								.putMat4(RenderSystem.getTextureMatrix());
 					} else {
 						for (int i = 0; i < size; i++) view.put(i, (byte) 0);
 					}
