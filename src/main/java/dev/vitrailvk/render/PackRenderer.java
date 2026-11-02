@@ -837,6 +837,9 @@ public final class PackRenderer implements AutoCloseable {
 			if (!areas.isEmpty() && casters.translucent()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, RenderType.translucent(), TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
 			}
+			// TODO-VERIFY: confirm depth mip generation and shader sampling on live Vulkan devices.
+			if (this.shadow.depth().mipLevels > 1) mipChain(cmd, stack, this.shadow.depth(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
+			if (this.shadow.depthNoTranslucent().mipLevels > 1) mipChain(cmd, stack, this.shadow.depthNoTranslucent(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (!areas.isEmpty()) ShadowAmortisation.drawn();
 			runPasses(cmd, stack, this.chain.chain().prepareEnd());
 		}
@@ -936,7 +939,7 @@ public final class PackRenderer implements AutoCloseable {
 		long renderPass = this.renderPasses.renderPass(formats, this.shadow.depthFormat(), true);
 		long[] views = new long[outputs.size() + 1];
 		for (int i = 0; i < outputs.size(); i++) views[i] = outputs.get(i).getImageView();
-		views[outputs.size()] = this.shadow.depth().getImageView();
+		views[outputs.size()] = attachmentView(this.shadow.depth());
 		int size = this.shadow.resolution();
 		long framebuffer = this.renderPasses.framebuffer(renderPass, views, size, size);
 		beginPass(cmd, stack, renderPass, framebuffer, size, size, false);
@@ -1073,11 +1076,15 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private static void mipChain(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image) {
+		mipChain(cmd, stack, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_FILTER_LINEAR);
+	}
+
+	private static void mipChain(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image, int aspect, int filter) {
 		image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
 				.srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
 				.image(image.getId());
-		barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+		barrier.subresourceRange().aspectMask(aspect).levelCount(1).layerCount(1);
 		int width = image.width;
 		int height = image.height;
 		for (int level = 1; level < image.mipLevels; level++) {
@@ -1088,12 +1095,12 @@ public final class PackRenderer implements AutoCloseable {
 					.srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
 			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
 			VkImageBlit.Buffer region = VkImageBlit.calloc(1, stack);
-			region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1).layerCount(1);
-			region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level).layerCount(1);
+			region.srcSubresource().aspectMask(aspect).mipLevel(level - 1).layerCount(1);
+			region.dstSubresource().aspectMask(aspect).mipLevel(level).layerCount(1);
 			region.srcOffsets(1).set(width, height, 1);
 			region.dstOffsets(1).set(nextWidth, nextHeight, 1);
 			vkCmdBlitImage(cmd, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.getId(),
-					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_LINEAR);
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, filter);
 			barrier.oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL).newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
 					.srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
 			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
@@ -1196,7 +1203,7 @@ public final class PackRenderer implements AutoCloseable {
 						image = this.shadow.depth();
 					}
 					image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-					long sampler = slot.depth() ? this.shadow.compare() : image.getSampler();
+					long sampler = slot.depth() ? this.shadow.compare(image) : image.getSampler();
 					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
 					for (int i = 0; i < slot.count(); i++) {
 						info.get(i).imageView(image.getImageView()).sampler(sampler)

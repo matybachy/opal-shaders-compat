@@ -15,7 +15,7 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 
 ## Otevřené / neověřené
 - Nic z položek 3 a dál není spuštěné ani vizuálně ověřené (pokyn: netestovat).
-- Stíny: jen sekce zkompilované grafem kamery; `shadowcomp` a depth mipmapy zatím chybí.
+- V PRÁCI: stíny entit/BER, shadowcomp a depth mipmapy; terén jen ze sekcí grafu kamery.
 - `centerDepth` bez vyhlazení.
 - `./gradlew build` opraven: licenční soubory jsou explicitní cesty; sestavení prošlo.
 - Při selhání se prostředky uvolní po dokončení nebo zahození snímku VMR.
@@ -25,6 +25,6 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - TODO-VERIFY: fáze oblohy, mraků a počasí včetně rozšíření NeoForge za běhu.
 - TODO-VERIFY: dvě fáze ruky, NeoForge hooky, depth a potlačení vanilla ruky během hry.
 - TODO-VERIFY: překlad mesh programů a jejich cílové půlky za běhu.
-- TODO-VERIFY: DynamicTransforms používá aktuální matice a barvu; model offset je zatím nula.
+- TODO-VERIFY: depth mipmapy a formátová podpora; DynamicTransforms má nulový model offset.
 - TODO-VERIFY: BufferUploader směruje okamžité sky/částice/počasí/mraky; ověřit mixin pořadí a životnost. statické VBO oblohy/mraků zachyceno; entity a rozdělení ruky chybí.
 - TODO-VERIFY: VBO kopie a synchronizace; ověřit pokrytí entit/částic, ID a dělení smíšených batchů; neznámé primitivy zůstávají VMR.

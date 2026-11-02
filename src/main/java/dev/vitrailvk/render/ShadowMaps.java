@@ -3,9 +3,11 @@ package dev.vitrailvk.render;
 import dev.vitrail.pack.model.TargetFormat;
 import dev.vitrail.pack.target.PackDirectives;
 import dev.vitrailvk.vk.Vk;
+import dev.vitrailvk.VitrailVk;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkSamplerCreateInfo;
+import org.lwjgl.vulkan.VkFormatProperties;
 
 import java.nio.LongBuffer;
 import java.util.List;
@@ -29,7 +31,7 @@ final class ShadowMaps implements AutoCloseable {
 	private final VulkanImage depthNoTranslucent;
 	private final Map<Integer, VulkanImage> colours = new TreeMap<>();
 	private final List<PackDirectives.ShadowColour> directives;
-	private final long compareSampler;
+	private final long[] compareSamplers = new long[2];
 
 	ShadowMaps(int resolution, Set<Integer> named, List<PackDirectives.ShadowColour> directives,
 			List<PackDirectives.ShadowDepth> depths) {
@@ -37,19 +39,39 @@ final class ShadowMaps implements AutoCloseable {
 		this.directives = directives;
 		int usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 				| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-		this.depth = VulkanImage.createDepthImage(DEPTH_FORMAT, resolution, resolution, usage, linear(depths, 0), true);
-		this.depthNoTranslucent = VulkanImage.createDepthImage(DEPTH_FORMAT, resolution, resolution, usage,
-				linear(depths, 1), true);
+		boolean supported = supportsDepthBlit();
+		this.depth = depthImage(resolution, usage, depths, 0, supported);
+		this.depthNoTranslucent = depthImage(resolution, usage, depths, 1, supported);
 		for (int index : named) colour(index);
-		this.compareSampler = compareSampler();
+		this.compareSamplers[0] = compareSampler(this.depth.mipLevels);
+		this.compareSamplers[1] = compareSampler(this.depthNoTranslucent.mipLevels);
 	}
 
+	// TODO-VERIFY: validate depth-format blit capabilities and sampled mip levels on live devices.
+	private static boolean supportsDepthBlit() {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkFormatProperties properties = VkFormatProperties.malloc(stack);
+			vkGetPhysicalDeviceFormatProperties(Vk.device().getPhysicalDevice(), DEPTH_FORMAT, properties);
+			int required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+			return (properties.optimalTilingFeatures() & required) == required;
+		}
+	}
+
+	private static VulkanImage depthImage(int resolution, int usage, List<PackDirectives.ShadowDepth> depths,
+			int index, boolean supported) {
+		boolean mipmap = index < depths.size() && depths.get(index).mipmap();
+		if (mipmap && !supported) VitrailVk.LOGGER.warn("[pack] shadowtex{} mipmaps unavailable: depth format cannot blit", index);
+		int levels = mipmap && supported ? Integer.SIZE - Integer.numberOfLeadingZeros(resolution) : 1;
+		return VulkanImage.builder(resolution, resolution).setFormat(DEPTH_FORMAT).setUsage(usage)
+				.setMipLevels(levels).setLevelViews(levels > 1).setLinearFiltering(linear(depths, index))
+				.setClamp(true).createVulkanImage();
+	}
 	private static boolean linear(List<PackDirectives.ShadowDepth> depths, int index) {
 		return index >= depths.size() || !depths.get(index).nearest();
 	}
 
 	/** {@code GL_LINEAR} plus {@code GL_COMPARE_REF_TO_TEXTURE}, LEQUAL: what a {@code sampler2DShadow} is written against. */
-	private static long compareSampler() {
+	private static long compareSampler(int levels) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkSamplerCreateInfo info = VkSamplerCreateInfo.calloc(stack).sType$Default()
 					.magFilter(VK_FILTER_LINEAR).minFilter(VK_FILTER_LINEAR)
@@ -58,7 +80,7 @@ final class ShadowMaps implements AutoCloseable {
 					.addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
 					.addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
 					.compareEnable(true).compareOp(VK_COMPARE_OP_LESS_OR_EQUAL)
-					.minLod(0.0F).maxLod(0.0F);
+					.minLod(0.0F).maxLod(levels - 1);
 			LongBuffer handle = stack.mallocLong(1);
 			Vk.check(vkCreateSampler(Vk.device(), info, null, handle), "vkCreateSampler");
 			return handle.get(0);
@@ -81,8 +103,8 @@ final class ShadowMaps implements AutoCloseable {
 		return this.depthNoTranslucent;
 	}
 
-	long compare() {
-		return this.compareSampler;
+	long compare(VulkanImage image) {
+		return this.compareSamplers[image == this.depthNoTranslucent ? 1 : 0];
 	}
 
 	Map<Integer, VulkanImage> colours() {
@@ -115,6 +137,6 @@ final class ShadowMaps implements AutoCloseable {
 		this.depthNoTranslucent.free();
 		this.colours.values().forEach(VulkanImage::free);
 		this.colours.clear();
-		vkDestroySampler(Vk.device(), this.compareSampler, null);
+		for (long sampler : this.compareSamplers) vkDestroySampler(Vk.device(), sampler, null);
 	}
 }
