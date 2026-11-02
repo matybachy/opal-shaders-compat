@@ -132,6 +132,7 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<Integer, HostBuffer> uniformBuffers = new HashMap<>();
 	private final Set<String> warned = new HashSet<>();
 	private final HostBuffer quad;
+	private final FrameArena meshArena = new FrameArena();
 	private final Std140Writer std140 = new Std140Writer();
 	private final VulkanImage noise;
 	private final VulkanImage flatNormal;
@@ -395,6 +396,7 @@ public final class PackRenderer implements AutoCloseable {
 			this.depthNoHand = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
 		}
 		int frame = Renderer.getCurrentFrame();
+		this.meshArena.begin(frame);
 		this.pool = descriptorPool(frame);
 		vkResetDescriptorPool(Vk.device(), this.pool, 0);
 		this.ubo = this.uniformBuffers.computeIfAbsent(frame,
@@ -1096,6 +1098,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.descriptorPools.values().forEach(pool -> vkDestroyDescriptorPool(Vk.device(), pool, null));
 		this.descriptorPools.clear();
 		this.uniformBuffers.values().forEach(HostBuffer::close);
+		this.meshArena.close();
 		this.uniformBuffers.clear();
 		this.quad.close();
 		this.noise.free();
