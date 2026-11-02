@@ -323,6 +323,22 @@ public final class PackRenderer implements AutoCloseable {
 		}
 	}
 
+	/** Tries a phase-scoped immediate draw, leaving ownership with the caller on failure. */
+	// TODO-VERIFY: check mixin ordering and the immediate draw path with VulkanMod at runtime.
+	public static boolean drawImmediate(MeshData mesh) {
+		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
+		Families.Phase current = phase();
+		if (current != Families.Phase.SKY && current != Families.Phase.PARTICLES
+				&& current != Families.Phase.WEATHER && current != Families.Phase.CLOUDS) return false;
+		var shader = RenderSystem.getShader();
+		if (shader == null) return false;
+		try {
+			return active.meshLayer(mesh, shader.getName(), DrawIds.NONE);
+		} catch (RuntimeException e) {
+			fail(e);
+			return false;
+		}
+	}
 	/** After {@code GameRenderer.renderLevel}, before the GUI. */
 	public static void afterLevel() {
 		if (active == null || failedDuringFrame) return;
