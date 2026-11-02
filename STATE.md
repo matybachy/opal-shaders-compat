@@ -26,4 +26,5 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - TODO-VERIFY: fáze částic a ruky za běhu; rozdělení ruky před/po deferred ještě chybí.
 - TODO-VERIFY: překlad mesh programů a jejich cílové půlky za běhu; cache zatím nikdo nevolá.
 - TODO-VERIFY: DynamicTransforms používá aktuální matice a barvu; model offset je zatím nula.
-- TODO-VERIFY: BufferUploader směruje okamžité sky/částice/počasí/mraky; ověřit mixin pořadí a životnost. VBO, entity a ruka chybí; mesh přijímá i samostatné buffery a matice.
+- TODO-VERIFY: BufferUploader směruje okamžité sky/částice/počasí/mraky; ověřit mixin pořadí a životnost. statické VBO oblohy/mraků zachyceno; entity a rozdělení ruky chybí.
+- TODO-VERIFY: VBO kopie před VulkanMod uploadem, synchronizace indexů a matice statické oblohy/mraků.

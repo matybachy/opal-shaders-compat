@@ -339,6 +339,19 @@ public final class PackRenderer implements AutoCloseable {
 			return false;
 		}
 	}
+	/** Draws a captured static vertex buffer while the sky or cloud renderer owns the call. */
+	// TODO-VERIFY: check static VBO draw matrices and upload lifetime in a running VulkanMod frame.
+	public static boolean drawStaticMesh(MeshData.DrawState state, ByteBuffer vertices, ByteBuffer indices,
+			String shader, Matrix4fc view, Matrix4fc projection) {
+		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
+		if (phase() != Families.Phase.SKY && phase() != Families.Phase.CLOUDS) return false;
+		try {
+			return active.meshLayer(state, vertices, indices, shader, DrawIds.NONE, view, projection);
+		} catch (RuntimeException e) {
+			fail(e);
+			return false;
+		}
+	}
 	/** After {@code GameRenderer.renderLevel}, before the GUI. */
 	public static void afterLevel() {
 		if (active == null || failedDuringFrame) return;
