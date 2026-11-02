@@ -26,3 +26,4 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - TODO-VERIFY: fáze částic a ruky za běhu; rozdělení ruky před/po deferred ještě chybí.
 - TODO-VERIFY: překlad mesh programů a jejich cílové půlky za běhu; cache zatím nikdo nevolá.
 - TODO-VERIFY: DynamicTransforms používá aktuální matice a barvu; model offset je zatím nula.
+- TODO-VERIFY: meshLayer připraveno pro kreslení; mixiny ani rozšíření rodin zatím nepřipojeny.
