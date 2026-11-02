@@ -177,7 +177,8 @@ public final class PackRenderer implements AutoCloseable {
 			this.packName = this.opened.source().packName();
 			this.values = PackValues.read(this.opened, dimension);
 			this.values.convention(ClipSpace.FORWARD);
-			ChainPlan.Families families = new ChainPlan.Families(terrainMesh, false, false, false);
+			// TODO-VERIFY: verify entity and particle coverage, including fallback draws, in a live frame.
+			ChainPlan.Families families = new ChainPlan.Families(terrainMesh, true, true, false);
 			this.chain = PackProgram.loadChain(this.opened, dimension, ChainFilter.ALL, families);
 			this.terrain = terrainMesh
 					? PackProgram.loadTerrain(this.opened, this.chain.place(), VertexInputs.TERRAIN)
