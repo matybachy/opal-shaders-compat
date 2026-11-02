@@ -22,4 +22,13 @@ public abstract class LevelRendererMixin {
 			CallbackInfo ci) {
 		PackRenderer.beginLevel(frustumMatrix, projectionMatrix);
 	}
+
+	@Inject(method = "renderLevel", at = @At(value = "INVOKE", shift = At.Shift.BEFORE,
+			target = "Lnet/minecraft/client/renderer/LevelRenderer;renderSky(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V"))
+	private void vitrailvk$beforeSky(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
+			GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix,
+			CallbackInfo ci) {
+		var position = camera.getPosition();
+		PackRenderer.beforeSky(position.x, position.y, position.z);
+	}
 }

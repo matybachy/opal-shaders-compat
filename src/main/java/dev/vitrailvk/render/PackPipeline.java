@@ -399,8 +399,9 @@ final class PackPipeline implements AutoCloseable {
 							.alphaBlendOp(VK_BLEND_OP_ADD);
 				}
 			}
-			VkPipelineColorBlendStateCreateInfo colourBlend = VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default()
-					.attachmentCount(attachments).pAttachments(blend);
+			VkPipelineColorBlendStateCreateInfo colourBlend = VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default();
+			// A map drawn with depth alone has no attachments; the setter counts what it is handed.
+			if (attachments > 0) colourBlend.pAttachments(blend);
 			VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
 					// VulkanMod Reforged's own dynamic states as well: binding a pipeline that has one of
 					// them static would invalidate what VulkanMod set, and its next draw would use it unset.

@@ -4,13 +4,19 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import dev.vitrail.glsl.PackProgram;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.model.BlendMode;
+import dev.vitrail.pack.model.ProgramStage;
 import dev.vitrail.pack.program.ChainFilter;
 import dev.vitrail.pack.program.TerrainPass;
 import dev.vitrail.pack.source.OpenedPack;
+import dev.vitrail.pack.source.ShadowCasters;
+import dev.vitrail.pack.source.ShadowCullState;
 import dev.vitrail.pack.target.ChainPlan;
+import dev.vitrail.pack.target.PackDirectives;
 import dev.vitrail.pack.target.SamplerPlan;
 import dev.vitrail.pack.target.TargetDirectives;
 import dev.vitrail.render.PackValues;
+import dev.vitrail.render.ShadowAmortisation;
+import dev.vitrail.render.ShadowCullPlan;
 import dev.vitrail.uniform.ClipSpace;
 import dev.vitrail.uniform.NoiseTexture;
 import dev.vitrail.uniform.UniformBlock;
@@ -42,8 +48,10 @@ import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.joml.Vector3f;
 import org.joml.Vector3i;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -69,6 +77,7 @@ import java.nio.ByteOrder;
 import java.nio.LongBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -85,9 +94,9 @@ import static org.lwjgl.vulkan.VK10.*;
  * Draws the selected pack over VulkanMod Reforged, driven by the plans Vitrail's loader makes
  * ({@code loadChain}, {@code loadTerrain}).
  * <p>
- * A frame: the level's matrices are captured when it starts ({@link #beginLevel}). The first time the
- * pack draws in a frame it "opens" it: the targets and the depth are cleared and the begin and prepare
- * passes run. The chunk layers are drawn by the pack's terrain programs into its own targets and depth
+ * A frame: the level's matrices are captured when it starts ({@link #beginLevel}). Just before the sky
+ * ({@link #beforeSky}) the frame opens: the targets and the depth are cleared, the begin passes run, the
+ * map is drawn from the light and the prepare passes run. The chunk layers are drawn by the pack's terrain programs into its own targets and depth
  * ({@link #drawTerrain}, instead of VulkanMod's shader); before the first translucent layer the depth
  * is copied for {@code depthtex1} and the deferred passes run. After the level ({@link #afterLevel}) the
  * remaining passes and {@code final} run, the last into the swapchain image. Each time, VulkanMod's own
@@ -130,9 +139,11 @@ public final class PackRenderer implements AutoCloseable {
 	private VulkanImage depth;
 	private VulkanImage depthNoTranslucent;
 	private VulkanImage depthNoHand;
+	private final ShadowMaps shadow;
 
 	// Per frame
 	private boolean frameOpen;
+	private boolean shadowDone;
 	private boolean deferredDone;
 	private int nextPass;
 	private long pool;
@@ -165,7 +176,9 @@ public final class PackRenderer implements AutoCloseable {
 					String name = entry.getKey().name().toLowerCase(Locale.ROOT) + ":" + entry.getValue().path();
 					this.terrainPipelines.put(entry.getKey(), new PackPipeline(name, entry.getValue().program(), compiler,
 							PackPipeline.Kind.TERRAIN, null));
-					this.terrainBlocks.put(entry.getKey(), block(name, entry.getValue(), this.values.geometryCatalog()));
+					// A pass drawn from the light reads the light's matrices under gl_ModelViewMatrix.
+					this.terrainBlocks.put(entry.getKey(), block(name, entry.getValue(),
+							entry.getKey().shadow() ? this.values.shadowGeometryCatalog() : this.values.geometryCatalog()));
 				}
 			}
 			this.quad = new HostBuffer(6 * 20, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 4);
@@ -182,6 +195,8 @@ public final class PackRenderer implements AutoCloseable {
 			// What Iris binds when the resource pack ships no normal or specular map: a flat normal, nothing.
 			this.flatNormal = uploaded(1, 1, new byte[] {(byte) 127, (byte) 127, (byte) 255, (byte) 255}, true);
 			this.noSpecular = uploaded(1, 1, new byte[] {0, 0, 0, 0}, true);
+			this.shadow = new ShadowMaps(this.values.shadowResolution(), shadowNamed(), this.values.shadowColours(),
+					this.values.shadowDepths());
 			logPlan(System.nanoTime() - start);
 			built = true;
 		} finally {
@@ -220,6 +235,24 @@ public final class PackRenderer implements AutoCloseable {
 		return image;
 	}
 
+	/** Every shadow colour the pack samples or a shadow program writes. */
+	private Set<Integer> shadowNamed() {
+		Set<Integer> named = new HashSet<>(this.chain.targets().shadowAllocated());
+		if (this.terrain != null) {
+			for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
+				if (entry.getKey().shadow()) named.addAll(shadowWrites(entry.getValue()));
+			}
+		}
+		return named;
+	}
+
+	/** Which shadow colours a shadow program's draw buffers name, in the order of its outputs. */
+	private List<Integer> shadowWrites(PackProgram.Loaded loaded) {
+		var fragment = loaded.program().stages().get(ProgramStage.FRAGMENT);
+		List<Integer> declared = fragment == null ? List.of() : fragment.drawBuffers();
+		return dev.vitrail.pack.target.DrawBuffers.shadowColours(declared, this.chain.targets().shadowCeiling());
+	}
+
 	private static UniformBlock block(String name, PackProgram.Loaded loaded, UniformCatalog catalog) {
 		UniformBlock block = new UniformBlock(loaded.program().uniforms(), catalog);
 		if (!block.unanswered().isEmpty()) {
@@ -238,6 +271,16 @@ public final class PackRenderer implements AutoCloseable {
 		if (active != null) {
 			active.values.advance();
 			active.frameOpen = false;
+		}
+	}
+
+	/** Just before {@code LevelRenderer.renderSky}: what the frame needs ahead of the world. */
+	public static void beforeSky(double camX, double camY, double camZ) {
+		if (active == null) return;
+		try {
+			active.openAndShadow(camX, camY, camZ);
+		} catch (RuntimeException e) {
+			fail(e);
 		}
 	}
 
@@ -321,11 +364,12 @@ public final class PackRenderer implements AutoCloseable {
 		return Renderer.getInstance().getMainPass().getColorAttachment();
 	}
 
-	/** Once per frame, before the pack's first draw: size, descriptors, clears, begin and prepare. */
+	/** Once per frame, before the pack's first draw: size, descriptors, clears, begin. */
 	private void openFrame(VkCommandBuffer cmd, MemoryStack stack) {
 		if (this.frameOpen) return;
 		this.frameOpen = true;
 		this.deferredDone = false;
+		this.shadowDone = false;
 		this.nextPass = 0;
 		VulkanImage screen = screen();
 		if (this.targets == null || !this.targets.matches(screen.width, screen.height)) {
@@ -347,7 +391,8 @@ public final class PackRenderer implements AutoCloseable {
 		this.ubo.rewind();
 
 		clearTargets(cmd, stack);
-		runPasses(cmd, stack, this.chain.chain().prepareEnd());
+		clearShadowMaps(cmd, stack);
+		runPasses(cmd, stack, this.chain.chain().beginEnd());
 	}
 
 	private void runPasses(VkCommandBuffer cmd, MemoryStack stack, int until) {
@@ -386,6 +431,7 @@ public final class PackRenderer implements AutoCloseable {
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
 			renderer.endRenderPass(cmd);
 			openFrame(cmd, stack);
+			runPasses(cmd, stack, this.chain.chain().prepareEnd());
 			if (pass == TerrainPass.TRANSLUCENT) {
 				deferred(cmd, stack);
 				WorldRenderer world = WorldRenderer.getInstance();
@@ -482,36 +528,199 @@ public final class PackRenderer implements AutoCloseable {
 		}
 		WorldRenderer world = WorldRenderer.getInstance();
 		StaticQueue<ChunkArea> areas = ((WorldRendererAccessor) world).vitrailvk$sectionGraph().getChunkAreaQueue().queue();
-		ByteBuffer offset = stack.malloc(12);
 		int areaCount = areas.size();
 		for (int a = 0; a < areaCount; a++) {
 			ChunkArea area = areas.get(translucent ? areaCount - 1 - a : a);
 			StaticQueue<RenderSection> sections = area.sectionQueue;
-			DrawBuffers buffers = area.getDrawBuffers();
-			AreaBuffer vertices = buffers.getAreaBuffer(type);
-			if (vertices == null || sections.size() == 0) continue;
-
-			vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertices.getId()), stack.longs(0));
-			Vector3i origin = ((DrawBuffersAccessor) buffers).vitrailvk$origin();
-			offset.putFloat(0, (float) (origin.x + DrawBuffers.POS_OFFSET - camX));
-			offset.putFloat(4, (float) (origin.y + DrawBuffers.POS_OFFSET - camY));
-			offset.putFloat(8, (float) (origin.z + DrawBuffers.POS_OFFSET - camZ));
-			vkCmdPushConstants(cmd, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, offset);
-			if (translucent) {
-				AreaBuffer indices = buffers.getIndexBuffer();
-				if (indices == null) continue;
-				vkCmdBindIndexBuffer(cmd, indices.getId(), 0, VK_INDEX_TYPE_UINT16);
-			}
+			if (sections.size() == 0 || !bindArea(cmd, stack, pipeline, area, type, camX, camY, camZ)) continue;
 
 			int count = sections.size();
 			for (int s = 0; s < count; s++) {
-				RenderSection section = sections.get(translucent ? count - 1 - s : s);
-				DrawParametersAccessor draw = (DrawParametersAccessor) section.getDrawParameters(type);
-				if (draw.vitrailvk$indexCount() <= 0) continue;
-				int firstIndex = draw.vitrailvk$firstIndex() == -1 ? 0 : draw.vitrailvk$firstIndex();
-				vkCmdDrawIndexed(cmd, draw.vitrailvk$indexCount(), 1, firstIndex, draw.vitrailvk$vertexOffset(),
-						draw.vitrailvk$baseInstance());
+				drawSection(cmd, sections.get(translucent ? count - 1 - s : s), type);
 			}
+		}
+	}
+
+	/** Binds what one chunk area's sections are drawn out of; false if it has nothing for this layer. */
+	private static boolean bindArea(VkCommandBuffer cmd, MemoryStack stack, PackPipeline pipeline, ChunkArea area,
+			TerrainRenderType type, double camX, double camY, double camZ) {
+		DrawBuffers buffers = area.getDrawBuffers();
+		AreaBuffer vertices = buffers.getAreaBuffer(type);
+		if (vertices == null) return false;
+		if (type == TerrainRenderType.TRANSLUCENT) {
+			AreaBuffer indices = buffers.getIndexBuffer();
+			if (indices == null) return false;
+			vkCmdBindIndexBuffer(cmd, indices.getId(), 0, VK_INDEX_TYPE_UINT16);
+		}
+		vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertices.getId()), stack.longs(0));
+		Vector3i origin = ((DrawBuffersAccessor) buffers).vitrailvk$origin();
+		ByteBuffer offset = stack.malloc(12);
+		offset.putFloat(0, (float) (origin.x + DrawBuffers.POS_OFFSET - camX));
+		offset.putFloat(4, (float) (origin.y + DrawBuffers.POS_OFFSET - camY));
+		offset.putFloat(8, (float) (origin.z + DrawBuffers.POS_OFFSET - camZ));
+		vkCmdPushConstants(cmd, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, offset);
+		return true;
+	}
+
+	private static void drawSection(VkCommandBuffer cmd, RenderSection section, TerrainRenderType type) {
+		DrawParametersAccessor draw = (DrawParametersAccessor) section.getDrawParameters(type);
+		if (draw.vitrailvk$indexCount() <= 0) return;
+		int firstIndex = draw.vitrailvk$firstIndex() == -1 ? 0 : draw.vitrailvk$firstIndex();
+		vkCmdDrawIndexed(cmd, draw.vitrailvk$indexCount(), 1, firstIndex, draw.vitrailvk$vertexOffset(),
+				draw.vitrailvk$baseInstance());
+	}
+
+	// ----------------------------------------------------------------------------------------------
+	// Shadow
+
+	/**
+	 * The frame opens here, and the map is drawn: solid and cut-out terrain, what the mesh families
+	 * cast, the copy without translucents, translucent terrain. The prepare passes read the map of this
+	 * frame, so they run behind it. Iris's order ({@code shadows/ShadowRenderer.java}).
+	 */
+	private void openAndShadow(double camX, double camY, double camZ) {
+		Renderer renderer = Renderer.getInstance();
+		VkCommandBuffer cmd = Renderer.getCommandBuffer();
+		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+			renderer.endRenderPass(cmd);
+			openFrame(cmd, stack);
+			if (this.shadowDone) return;
+			this.shadowDone = true;
+			Collection<ShadowArea> areas = shadowWanted() ? shadowSections(camX, camY, camZ) : List.of();
+			ShadowCasters casters = this.values.shadowCasters();
+			if (!areas.isEmpty() && casters.terrain()) {
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_SOLID, RenderType.solid(), TerrainRenderType.SOLID, camX, camY, camZ);
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutoutMipped(), TerrainRenderType.CUTOUT_MIPPED, camX, camY, camZ);
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutout(), TerrainRenderType.CUTOUT, camX, camY, camZ);
+			}
+			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
+			if (!areas.isEmpty() && casters.translucent()) {
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, RenderType.translucent(), TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
+			}
+			if (!areas.isEmpty()) ShadowAmortisation.drawn();
+			runPasses(cmd, stack, this.chain.chain().prepareEnd());
+		}
+	}
+
+	/** Whether the pack has anything to draw the map with; the map then stays clear, as in Iris. */
+	private boolean shadowWanted() {
+		if (this.terrain == null) return false;
+		for (TerrainPass pass : this.terrainPipelines.keySet()) {
+			if (pass.shadow()) return true;
+		}
+		return false;
+	}
+
+	private record ShadowArea(ChunkArea area, List<RenderSection> sections) {
+	}
+
+	/**
+	 * The compiled sections the light sees, by chunk area. VulkanMod's graph walks from the camera, so
+	 * a section it has never reached has no mesh and casts nothing here, however close to the frustum.
+	 * Voxelising programs keep what lies outside the frustum: their volume is not limited to the map.
+	 */
+	private Collection<ShadowArea> shadowSections(double camX, double camY, double camZ) {
+		int chunks = Minecraft.getInstance().options.getEffectiveRenderDistance();
+		boolean voxelised = this.terrain.programs().entrySet().stream()
+				.anyMatch(entry -> entry.getKey().shadow() && entry.getValue().voxelises());
+		ShadowCullPlan plan = this.values.shadowCullPlan(chunks, chunks, new Vector3f(), new Matrix4f(), voxelised);
+		float bound = plan.bound();
+		if (bound == 0.0F) return List.of();
+		boolean frustumCulled = !voxelised && plan.state() != ShadowCullState.DISTANCE;
+		FrustumIntersection frustum = new FrustumIntersection(this.values.shadowFrustum(new Matrix4f()), false);
+		float boundSquared = bound * bound;
+		Map<ChunkArea, ShadowArea> areas = new LinkedHashMap<>();
+		for (RenderSection section : WorldRenderer.getInstance().getSectionGrid().sections) {
+			if (section == null || !section.isCompiled() || section.isCompletelyEmpty()) continue;
+			ChunkArea area = section.getChunkArea();
+			if (area == null) continue;
+			float x = (float) (section.xOffset - camX);
+			float y = (float) (section.yOffset - camY);
+			float z = (float) (section.zOffset - camZ);
+			if (bound > 0.0F) {
+				float dx = Math.max(Math.max(x, -(x + 16.0F)), 0.0F);
+				float dz = Math.max(Math.max(z, -(z + 16.0F)), 0.0F);
+				if (dx * dx + dz * dz > boundSquared) continue;
+			}
+			if (frustumCulled && !frustum.testAab(x, y, z, x + 16.0F, y + 16.0F, z + 16.0F)) continue;
+			areas.computeIfAbsent(area, a -> new ShadowArea(a, new ArrayList<>())).sections().add(section);
+		}
+		return areas.values();
+	}
+
+	private void shadowLayer(VkCommandBuffer cmd, MemoryStack stack, Collection<ShadowArea> areas, TerrainPass pass,
+			RenderType renderType, TerrainRenderType type, double camX, double camY, double camZ) {
+		Set<TerrainRenderType> drawn = Initializer.CONFIG.uniqueOpaqueLayer
+				? TerrainRenderType.COMPACT_RENDER_TYPES : TerrainRenderType.SEMI_COMPACT_RENDER_TYPES;
+		if (!drawn.contains(type)) return;
+		PackPipeline pipeline = this.terrainPipelines.get(pass);
+		PackProgram.Loaded loaded = this.terrain.programs().get(pass);
+		if (pipeline == null || loaded == null) return;
+
+		List<VulkanImage> outputs = new ArrayList<>();
+		for (int index : shadowWrites(loaded)) outputs.add(this.shadow.colour(index));
+
+		renderType.setupRenderState();
+		VulkanImage atlas = glImage(RenderSystem.getShaderTexture(0));
+		VulkanImage lightmap = glImage(RenderSystem.getShaderTexture(2));
+		renderType.clearRenderState();
+
+		this.values.passAlphaTest(pass == TerrainPass.SHADOW_CUTOUT ? 0.1F : 0.0F);
+		long set = allocateSet(stack, this.pool, pipeline.setLayout());
+		writeDescriptors(stack, set, pipeline, loaded, this.terrainBlocks.get(pass), outputs, atlas, lightmap);
+
+		String bareName = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
+		List<PackPipeline.Blend> blends = blends(pass.program(), bareName, outputs.size(), PackPipeline.Blend.OFF);
+		PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, true, true,
+				VK_COMPARE_OP_LESS_OR_EQUAL, VK_CULL_MODE_NONE, 0xF, false, blends);
+		long renderPass = beginShadowPass(cmd, stack, outputs);
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(renderPass, outputs.size(), style));
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
+		if (type != TerrainRenderType.TRANSLUCENT) {
+			Renderer.getDrawer().bindIndexBuffer(cmd, Renderer.getDrawer().getQuadsIndexBuffer().getIndexBuffer());
+		}
+		for (ShadowArea area : areas) {
+			if (!bindArea(cmd, stack, pipeline, area.area(), type, camX, camY, camZ)) continue;
+			for (RenderSection section : area.sections()) drawSection(cmd, section, type);
+		}
+		vkCmdEndRenderPass(cmd);
+	}
+
+	/** Begins a pass over the given shadow colours and {@code shadowtex0}; returns the render pass. */
+	private long beginShadowPass(VkCommandBuffer cmd, MemoryStack stack, List<VulkanImage> outputs) {
+		for (VulkanImage output : outputs) {
+			output.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+		}
+		this.shadow.depth().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+		List<Integer> formats = outputs.stream().map(image -> image.format).toList();
+		long renderPass = this.renderPasses.renderPass(formats, this.shadow.depthFormat(), true);
+		long[] views = new long[outputs.size() + 1];
+		for (int i = 0; i < outputs.size(); i++) views[i] = outputs.get(i).getImageView();
+		views[outputs.size()] = this.shadow.depth().getImageView();
+		int size = this.shadow.resolution();
+		long framebuffer = this.renderPasses.framebuffer(renderPass, views, size, size);
+		beginPass(cmd, stack, renderPass, framebuffer, size, size, false);
+		return renderPass;
+	}
+
+	private void clearShadowMaps(VkCommandBuffer cmd, MemoryStack stack) {
+		clearDepth(cmd, stack, this.shadow.depth());
+		clearDepth(cmd, stack, this.shadow.depthNoTranslucent());
+		VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack)
+				.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(VK_REMAINING_MIP_LEVELS).layerCount(VK_REMAINING_ARRAY_LAYERS);
+		for (Map.Entry<Integer, VulkanImage> entry : this.shadow.colours().entrySet()) {
+			PackDirectives.ShadowColour directive = this.shadow.directive(entry.getKey());
+			if (directive != null && !directive.clear()) continue;
+			TargetDirectives.Colour colour = directive == null ? new TargetDirectives.Colour(1.0F, 1.0F, 1.0F, 1.0F) : directive.clearColour();
+			VkClearColorValue value = VkClearColorValue.calloc(stack);
+			if (directive != null && directive.format().used().integer()) {
+				value.int32(0, (int) colour.r()).int32(1, (int) colour.g()).int32(2, (int) colour.b()).int32(3, (int) colour.a());
+			} else {
+				value.float32(0, colour.r()).float32(1, colour.g()).float32(2, colour.b()).float32(3, colour.a());
+			}
+			VulkanImage image = entry.getValue();
+			image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+			vkCmdClearColorImage(cmd, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, value, range);
 		}
 	}
 
@@ -735,10 +944,15 @@ public final class PackRenderer implements AutoCloseable {
 				}
 				case SpirvModule.COMBINED_IMAGE_SAMPLER -> {
 					VulkanImage image = sampled(slot.name(), loaded, outputs, atlas, lightmap);
+					// A lookup compiled to a depth-reference sample needs a depth map and a comparing sampler.
+					if (slot.depth() && image != this.shadow.depth() && image != this.shadow.depthNoTranslucent()) {
+						image = this.shadow.depth();
+					}
 					image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+					long sampler = slot.depth() ? this.shadow.compare() : image.getSampler();
 					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
 					for (int i = 0; i < slot.count(); i++) {
-						info.get(i).imageView(image.getImageView()).sampler(image.getSampler())
+						info.get(i).imageView(image.getImageView()).sampler(sampler)
 								.imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 					}
 					write.pImageInfo(info);
@@ -785,6 +999,13 @@ public final class PackRenderer implements AutoCloseable {
 				}
 				case NOISE -> {
 					return this.noise;
+				}
+				case SHADOW_DEPTH -> {
+					return loaded.samplers().withoutTranslucents(sampler) ? this.shadow.depthNoTranslucent() : this.shadow.depth();
+				}
+				case SHADOW_COLOUR -> {
+					VulkanImage image = this.shadow.colour(binding.index());
+					if (!outputs.contains(image)) return image;
 				}
 				default -> { }
 			}
@@ -869,6 +1090,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.noise.free();
 		this.flatNormal.free();
 		this.noSpecular.free();
+		this.shadow.close();
 		freeTargets();
 		closeOpened();
 	}
