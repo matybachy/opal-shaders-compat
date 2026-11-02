@@ -362,6 +362,16 @@ public final class PackRenderer implements AutoCloseable {
 		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
 		Families.Phase current = phase();
 		DrawIds[] ids = ((MeshIds) (Object) mesh).vitrailvk$ids();
+		if (current == Families.Phase.SHADOW) {
+			var shadowShader = RenderSystem.getShader();
+			if (shadowShader == null) return true;
+			try {
+				active.shadowMesh(mesh, ids, shadowShader.getName());
+			} catch (RuntimeException e) {
+				fail(e);
+			}
+			return true;
+		}
 		boolean mixed = false;
 		if (current == Families.Phase.LEVEL && drawingLevel) {
 			DrawIds.Kind kind = homogeneousKind(ids, mesh.drawState().vertexCount());
@@ -845,6 +855,43 @@ public final class PackRenderer implements AutoCloseable {
 		}
 	}
 
+	/** One immediate entity mesh into the light's targets, without touching the main target. */
+	// TODO-VERIFY: check shadow entity inputs, render state and attachment/sampler hazards at runtime.
+	private void shadowMesh(MeshData mesh, DrawIds[] ids, String shader) {
+		Families.Piece piece = Families.resolve(shader, mesh.drawState().format(), Families.Phase.SHADOW,
+				PipelineState.blendInfo.enabled);
+		if (piece == null) return;
+		Optional<MeshPrograms.ShadowProgram> selected = this.meshPrograms.resolveShadow(piece, mesh.drawState().format());
+		if (selected.isEmpty()) return;
+		MeshPrograms.ShadowProgram program = selected.get();
+		// Sampling a shadow attachment while writing the same image is invalid in Vulkan.
+		// TODO-VERIFY: implement a separate read snapshot for shadow programs that sample these targets.
+		for (SamplerPlan.Binding binding : program.loaded().samplers().bindings()) {
+			if (binding.kind() == SamplerPlan.Kind.SHADOW_DEPTH || binding.kind() == SamplerPlan.Kind.SHADOW_COLOUR) return;
+		}
+		MeshDraw draw = MeshDraw.copy(this.meshArena, mesh);
+		if (draw == null) return;
+		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, ids, mesh.drawState(), mesh.vertexBuffer(),
+				RenderSystem.getShaderLineWidth());
+		List<VulkanImage> outputs = new ArrayList<>();
+		for (int index : shadowWrites(program.loaded())) outputs.add(this.shadow.colour(index));
+		Renderer renderer = Renderer.getInstance();
+		VkCommandBuffer cmd = Renderer.getCommandBuffer();
+		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+			renderer.endRenderPass(cmd);
+			this.values.passAlphaTest(program.loaded().alphaTest().reference());
+			long set = allocateSet(stack, this.pool, program.pipeline().setLayout());
+			writeDescriptors(stack, set, program.pipeline(), program.loaded(), program.uniforms(), outputs,
+					glImage(RenderSystem.getShaderTexture(0)), glImage(RenderSystem.getShaderTexture(2)));
+			PackPipeline.Style style = new PackPipeline.Style(draw.topology(), true, true, VK_COMPARE_OP_LESS_OR_EQUAL,
+					VK_CULL_MODE_NONE, 0xF, false, List.of(PackPipeline.Blend.OFF));
+			long pass = beginShadowPass(cmd, stack, outputs);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline().pipeline(pass, outputs.size(), style));
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline().layout(), 0, stack.longs(set), null);
+			draw.draw(cmd, stack, constants);
+			vkCmdEndRenderPass(cmd);
+		}
+	}
 	/** Whether the pack has anything to draw the map with; the map then stays clear, as in Iris. */
 	private boolean shadowWanted() {
 		if (this.terrain == null) return false;
