@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.HashSet;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -30,6 +31,8 @@ final class ShadowMaps implements AutoCloseable {
 	private final VulkanImage depth;
 	private final VulkanImage depthNoTranslucent;
 	private final Map<Integer, VulkanImage> colours = new TreeMap<>();
+	private final Map<Integer, VulkanImage> alternateColours = new TreeMap<>();
+	private final Set<Integer> flipped = new HashSet<>();
 	private final List<PackDirectives.ShadowColour> directives;
 	private final long[] compareSamplers = new long[2];
 
@@ -113,18 +116,45 @@ final class ShadowMaps implements AutoCloseable {
 
 	/** The target, made the first time anything names it: a program's draw buffer may be the only mention. */
 	VulkanImage colour(int index) {
-		return this.colours.computeIfAbsent(index, i -> {
-			TargetFormat format = i < this.directives.size()
-					? this.directives.get(i).format().used() : TargetFormat.RGBA8_UNORM;
-			return VulkanImage.builder(this.resolution, this.resolution)
-					.setFormat(PackTargets.vkFormat(format))
-					.setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-							| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-							| VK_IMAGE_USAGE_STORAGE_BIT)
-					.setLinearFiltering(!format.integer())
-					.setClamp(true)
-					.createVulkanImage();
-		});
+		return this.colours.computeIfAbsent(index, this::createColour);
+	}
+
+	VulkanImage alternateColour(int index) {
+		return this.alternateColours.computeIfAbsent(index, this::createColour);
+	}
+
+	// TODO-VERIFY: validate shadow color ping-pong and explicit flips across frames at runtime.
+	VulkanImage sampledColour(int index) {
+		return this.flipped.contains(index) ? alternateColour(index) : colour(index);
+	}
+
+	VulkanImage nextColour(int index) {
+		return this.flipped.contains(index) ? colour(index) : alternateColour(index);
+	}
+
+	void flip(int index) {
+		if (!this.flipped.add(index)) this.flipped.remove(index);
+	}
+
+	void resetFlips() {
+		this.flipped.clear();
+	}
+
+	Map<Integer, VulkanImage> alternateColours() {
+		return this.alternateColours;
+	}
+
+	private VulkanImage createColour(int index) {
+		TargetFormat format = index < this.directives.size()
+				? this.directives.get(index).format().used() : TargetFormat.RGBA8_UNORM;
+		return VulkanImage.builder(this.resolution, this.resolution)
+				.setFormat(PackTargets.vkFormat(format))
+				.setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+						| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+						| VK_IMAGE_USAGE_STORAGE_BIT)
+				.setLinearFiltering(!format.integer())
+				.setClamp(true)
+				.createVulkanImage();
 	}
 
 	PackDirectives.ShadowColour directive(int index) {
@@ -137,6 +167,9 @@ final class ShadowMaps implements AutoCloseable {
 		this.depthNoTranslucent.free();
 		this.colours.values().forEach(VulkanImage::free);
 		this.colours.clear();
+		this.alternateColours.values().forEach(VulkanImage::free);
+		this.alternateColours.clear();
+		this.flipped.clear();
 		for (long sampler : this.compareSamplers) vkDestroySampler(Vk.device(), sampler, null);
 	}
 }
