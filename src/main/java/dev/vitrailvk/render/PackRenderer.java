@@ -135,6 +135,7 @@ public final class PackRenderer implements AutoCloseable {
 	private final Set<String> warned = new HashSet<>();
 	private final HostBuffer quad;
 	private final FrameArena meshArena = new FrameArena();
+	private MeshPrograms meshPrograms;
 	private long meshArenaSerial = -1;
 	private final Std140Writer std140 = new Std140Writer();
 	private final VulkanImage noise;
@@ -171,6 +172,7 @@ public final class PackRenderer implements AutoCloseable {
 					? PackProgram.loadTerrain(this.opened, this.chain.place(), VertexInputs.TERRAIN)
 					: null;
 			if (compiler == null) compiler = new SpirvCompiler();
+			this.meshPrograms = new MeshPrograms(this.opened, this.chain, this.values, compiler);
 			for (Map.Entry<String, PackProgram.Loaded> entry : this.chain.programs().entrySet()) {
 				this.pipelines.put(entry.getKey(), new PackPipeline(entry.getKey(), entry.getValue().program(), compiler,
 						PackPipeline.Kind.QUAD, null));
@@ -210,6 +212,7 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private void closePartly() {
+		if (this.meshPrograms != null) this.meshPrograms.close();
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.terrainPipelines.values().forEach(PackPipeline::close);
 		closeOpened();
@@ -1119,6 +1122,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.descriptorPools.clear();
 		this.uniformBuffers.values().forEach(HostBuffer::close);
 		this.meshArena.close();
+		if (this.meshPrograms != null) this.meshPrograms.close();
 		this.uniformBuffers.clear();
 		this.quad.close();
 		this.noise.free();
