@@ -2,11 +2,14 @@ package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
+import dev.vitrail.render.EntityFrame;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.util.List;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -92,7 +95,9 @@ final class MeshDraw {
 
 	/** A record per vertex preserves identifiers even when the game combines entities in one batch. */
 	// TODO-VERIFY: validate per-vertex identifier lanes and missing attribute defaults in live shaders.
-	static FrameArena.Slice constants(FrameArena arena, DrawIds[] identifiers, int count, float lineWidth) {
+	static FrameArena.Slice constants(FrameArena arena, DrawIds[] identifiers, MeshData.DrawState state,
+			ByteBuffer source, float lineWidth) {
+		int count = state.vertexCount();
 		int stride = PackPipeline.Constants.STRIDE;
 		FrameArena.Slice slice = arena.allocate(Math.multiplyExact(stride, count));
 		ByteBuffer out = slice.bytes();
@@ -107,7 +112,55 @@ final class MeshDraw {
 			out.putFloat(base + PackPipeline.Constants.TANGENT + 12, 1.0F);
 			out.putFloat(base + PackPipeline.Constants.LINE_WIDTH, lineWidth);
 		}
+		fillQuadFrames(out, state, source);
 		return slice;
+	}
+	// TODO-VERIFY: check tangent and midpoint parity with Iris for packed quad formats at runtime.
+	private static void fillQuadFrames(ByteBuffer out, MeshData.DrawState state, ByteBuffer source) {
+		if (state.mode() != VertexFormat.Mode.QUADS) return;
+		VertexFormat format = state.format();
+		List<String> names = format.getElementAttributeNames();
+		int positionIndex = names.indexOf("Position"), uvIndex = names.indexOf("UV0"), normalIndex = names.indexOf("Normal");
+		if (positionIndex < 0 || uvIndex < 0) return;
+		VertexFormatElement position = format.getElements().get(positionIndex), uv = format.getElements().get(uvIndex);
+		if (position.type() != VertexFormatElement.Type.FLOAT || position.count() < 3
+				|| uv.type() != VertexFormatElement.Type.FLOAT || uv.count() < 2) return;
+		VertexFormatElement normal = normalIndex < 0 ? null : format.getElements().get(normalIndex);
+		if (normal != null && (normal.type() != VertexFormatElement.Type.BYTE || normal.count() < 3)) normal = null;
+		int stride = format.getVertexSize();
+		ByteBuffer in = source.duplicate().order(java.nio.ByteOrder.nativeOrder());
+		int base = in.position();
+		if ((long) state.vertexCount() * stride > in.remaining()) return;
+		int p = format.getOffset(position), t = format.getOffset(uv), n = normal == null ? -1 : format.getOffset(normal);
+		for (int first = 0; first + 3 < state.vertexCount(); first += 4) {
+			float[] xyz = new float[12], uvCoords = new float[8], face = new float[3];
+			float midU = 0, midV = 0;
+			for (int corner = 0; corner < 4; corner++) {
+				int at = base + (first + corner) * stride;
+				for (int axis = 0; axis < 3; axis++) xyz[corner * 3 + axis] = in.getFloat(at + p + axis * 4);
+				float u = in.getFloat(at + t), v = in.getFloat(at + t + 4);
+				uvCoords[corner * 2] = u; uvCoords[corner * 2 + 1] = v;
+				midU += u * 0.25F; midV += v * 0.25F;
+			}
+			boolean hasFace = EntityFrame.faceNormal(face, xyz[0], xyz[1], xyz[2], xyz[3], xyz[4], xyz[5],
+					xyz[6], xyz[7], xyz[8], xyz[9], xyz[10], xyz[11]);
+			for (int corner = 0; corner < 4; corner++) {
+				int at = base + (first + corner) * stride;
+				float nx = n >= 0 ? Math.max(-1.0F, in.get(at + n) / 127.0F) : hasFace ? face[0] : 0.0F;
+				float ny = n >= 0 ? Math.max(-1.0F, in.get(at + n + 1) / 127.0F) : hasFace ? face[1] : 0.0F;
+				float nz = n >= 0 ? Math.max(-1.0F, in.get(at + n + 2) / 127.0F) : hasFace ? face[2] : 1.0F;
+				int tangent = EntityFrame.tangent(nx, ny, nz, n >= 0,
+						xyz[0], xyz[1], xyz[2], uvCoords[0], uvCoords[1],
+						xyz[3], xyz[4], xyz[5], uvCoords[2], uvCoords[3],
+						xyz[6], xyz[7], xyz[8], uvCoords[4], uvCoords[5]);
+				int dst = (first + corner) * PackPipeline.Constants.STRIDE;
+				out.putFloat(dst + PackPipeline.Constants.MID_TEX, midU).putFloat(dst + PackPipeline.Constants.MID_TEX + 4, midV);
+				for (int axis = 0; axis < 4; axis++) {
+					float value = Math.max(-1.0F, (byte) (tangent >>> (axis * 8)) / 127.0F);
+					out.putFloat(dst + PackPipeline.Constants.TANGENT + axis * 4, value);
+				}
+			}
+		}
 	}
 	int topology() {
 		return this.topology;

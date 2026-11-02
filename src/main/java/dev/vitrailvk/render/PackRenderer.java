@@ -408,7 +408,7 @@ public final class PackRenderer implements AutoCloseable {
 		for (MixedMesh.Run run : runs) {
 			Families.Phase phase = run.kind() == DrawIds.Kind.BLOCK_ENTITY ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL;
 			MeshData.DrawState state = new MeshData.DrawState(original.format(), original.vertexCount(), run.count(),
-					com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLES, com.mojang.blaze3d.vertex.VertexFormat.IndexType.INT);
+					original.mode(), com.mojang.blaze3d.vertex.VertexFormat.IndexType.INT);
 			if (!meshLayer(state, mesh.vertexBuffer(), run.indices(), shader, ids, phase,
 					RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix())) {
 				throw new IllegalStateException("A preflighted mixed mesh run could not be drawn");
@@ -692,7 +692,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (outputs.isEmpty()) return false;
 		MeshDraw draw = MeshDraw.copy(this.meshArena, state, vertices, indices);
 		if (draw == null) return true;
-		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, identifiers, state.vertexCount(), RenderSystem.getShaderLineWidth());
+		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, identifiers, state, vertices, RenderSystem.getShaderLineWidth());
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {

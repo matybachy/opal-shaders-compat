@@ -21,7 +21,7 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - Při selhání se prostředky uvolní po dokončení nebo zahození snímku VMR.
 - V PRÁCI: položka 5; okamžité meshe a statické sky/cloud VBO zapojeny, ID entit putují ve vrcholových atributech; stejnorodé entity/BER batche směrovány; smíšené batche rozděleny bez změny pořadí; ruka naplánována před/po deferred.
 - TODO-VERIFY: životnost FrameArena a opakované vykreslení levelu v jednom snímku za běhu.
-- TODO-VERIFY: Vulkanové vazby a životnost MeshDraw za běhu.
+- TODO-VERIFY: Vulkanové vazby MeshDraw, tangent a střed UV čtyřúhelníků; pro jiné primitivy zatím výchozí hodnoty.
 - TODO-VERIFY: fáze oblohy, mraků a počasí včetně rozšíření NeoForge za běhu.
 - TODO-VERIFY: dvě fáze ruky, NeoForge hooky, depth a potlačení vanilla ruky během hry.
 - TODO-VERIFY: překlad mesh programů a jejich cílové půlky za běhu.
