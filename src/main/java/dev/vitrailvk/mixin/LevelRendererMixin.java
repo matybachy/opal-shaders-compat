@@ -32,8 +32,7 @@ public abstract class LevelRendererMixin {
 	private void vitrailvk$beforeSky(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
 			GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix,
 			CallbackInfo ci) {
-		var position = camera.getPosition();
-		PackRenderer.beforeSky(position.x, position.y, position.z);
+		PackRenderer.beforeSky(camera, deltaTracker.getGameTimeDeltaPartialTick(true));
 	}
 
 	// TODO-VERIFY: verify the phases against NeoForge sky, cloud and weather extensions at runtime.

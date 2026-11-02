@@ -333,10 +333,10 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	/** Just before {@code LevelRenderer.renderSky}: what the frame needs ahead of the world. */
-	public static void beforeSky(double camX, double camY, double camZ) {
+	public static void beforeSky(net.minecraft.client.Camera camera, float tick) {
 		if (active == null || failedDuringFrame) return;
 		try {
-			active.openAndShadow(camX, camY, camZ);
+			active.openAndShadow(camera, tick);
 		} catch (RuntimeException e) {
 			fail(e);
 		}
@@ -828,7 +828,9 @@ public final class PackRenderer implements AutoCloseable {
 	 * cast, the copy without translucents, translucent terrain. The prepare passes read the map of this
 	 * frame, so they run behind it. Iris's order ({@code shadows/ShadowRenderer.java}).
 	 */
-	private void openAndShadow(double camX, double camY, double camZ) {
+	private void openAndShadow(net.minecraft.client.Camera camera, float tick) {
+		var position = camera.getPosition();
+		double camX = position.x, camY = position.y, camZ = position.z;
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
@@ -836,14 +838,19 @@ public final class PackRenderer implements AutoCloseable {
 			openFrame(cmd, stack);
 			if (this.shadowDone) return;
 			this.shadowDone = true;
-			Collection<ShadowArea> areas = shadowWanted() ? shadowSections(camX, camY, camZ) : List.of();
 			ShadowCasters casters = this.values.shadowCasters();
+			Collection<ShadowArea> areas = shadowWanted() || casters.anyBlockEntity() ? shadowSections(camX, camY, camZ) : List.of();
 			if (!areas.isEmpty() && casters.terrain()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_SOLID, RenderType.solid(), TerrainRenderType.SOLID, camX, camY, camZ);
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutoutMipped(), TerrainRenderType.CUTOUT_MIPPED, camX, camY, camZ);
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutout(), TerrainRenderType.CUTOUT, camX, camY, camZ);
 			}
-			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
+			if (casters.anyFeature()) {
+				List<RenderSection> sections = areas.stream().flatMap(area -> area.sections().stream()).toList();
+				ShadowFeatures.render(this.values, camera, tick, sections, casters);
+				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
+				renderer.endRenderPass(cmd);
+			}			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
 			if (!areas.isEmpty() && casters.translucent()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, RenderType.translucent(), TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
 			}
@@ -911,7 +918,7 @@ public final class PackRenderer implements AutoCloseable {
 	 */
 	private Collection<ShadowArea> shadowSections(double camX, double camY, double camZ) {
 		int chunks = Minecraft.getInstance().options.getEffectiveRenderDistance();
-		boolean voxelised = this.terrain.programs().entrySet().stream()
+		boolean voxelised = this.terrain != null && this.terrain.programs().entrySet().stream()
 				.anyMatch(entry -> entry.getKey().shadow() && entry.getValue().voxelises());
 		ShadowCullPlan plan = this.values.shadowCullPlan(chunks, chunks, new Vector3f(), new Matrix4f(), voxelised);
 		float bound = plan.bound();
