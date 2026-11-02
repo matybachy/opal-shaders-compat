@@ -116,6 +116,7 @@ public final class PackRenderer implements AutoCloseable {
 	private static String activeKey;
 	private static String failedKey;
 	private static boolean failedDuringFrame;
+	private static long frameSerial;
 	private static SpirvCompiler compiler;
 
 	private final String packName;
@@ -133,6 +134,7 @@ public final class PackRenderer implements AutoCloseable {
 	private final Set<String> warned = new HashSet<>();
 	private final HostBuffer quad;
 	private final FrameArena meshArena = new FrameArena();
+	private long meshArenaSerial = -1;
 	private final Std140Writer std140 = new Std140Writer();
 	private final VulkanImage noise;
 	private final VulkanImage flatNormal;
@@ -326,6 +328,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** Called after VulkanMod finishes or discards the recorded frame. */
 	public static void frameEnded() {
+		frameSerial++;
 		if (failedDuringFrame) {
 			shutDown();
 			failedDuringFrame = false;
@@ -396,7 +399,11 @@ public final class PackRenderer implements AutoCloseable {
 			this.depthNoHand = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
 		}
 		int frame = Renderer.getCurrentFrame();
-		this.meshArena.begin(frame);
+		// TODO-VERIFY: confirm frame-slot reuse and multiple level renders against live VulkanMod frames.
+		if (this.meshArenaSerial != frameSerial) {
+			this.meshArena.begin(frame);
+			this.meshArenaSerial = frameSerial;
+		}
 		this.pool = descriptorPool(frame);
 		vkResetDescriptorPool(Vk.device(), this.pool, 0);
 		this.ubo = this.uniformBuffers.computeIfAbsent(frame,

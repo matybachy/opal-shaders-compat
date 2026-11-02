@@ -20,3 +20,4 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - `./gradlew build` opraven: licenční soubory jsou explicitní cesty; sestavení prošlo.
 - Při selhání se prostředky uvolní po dokončení nebo zahození snímku VMR.
 - V PRÁCI: vykreslování meshů a identifikátory objektů (položka 5); FrameArena a převod DrawIds připraveny, zatím bez napojení na kreslení.
+- TODO-VERIFY: životnost FrameArena a opakované vykreslení levelu v jednom snímku za běhu.
