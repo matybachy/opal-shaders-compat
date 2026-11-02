@@ -15,7 +15,7 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 
 ## Otevřené / neověřené
 - Nic z položek 3 a dál není spuštěné ani vizuálně ověřené (pokyn: netestovat).
-- V PRÁCI: stíny entit/BER a shadowcomp; depth mipmapy doplněny, entity/BER se odesílají do stínu, načítání shadowcomp a dvojice shadowcolor připraveny; plán průchodů zbývá.
+- V PRÁCI: stíny entit/BER a shadowcomp; depth mipmapy doplněny, entity/BER se odesílají do stínu, shaderové objekty a targety shadowcomp připraveny; plán průchodů zbývá.
 - `centerDepth` bez vyhlazení.
 - `./gradlew build` opraven: licenční soubory jsou explicitní cesty; sestavení prošlo.
 - Při selhání se prostředky uvolní po dokončení nebo zahození snímku VMR.

@@ -7,6 +7,8 @@ import dev.vitrail.glsl.LegacyGlsl;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.model.BlendMode;
 import dev.vitrail.pack.model.ProgramStage;
+import dev.vitrail.pack.model.TargetName;
+import dev.vitrail.pack.source.ShaderProperties;
 import dev.vitrail.pack.program.ChainFilter;
 import dev.vitrail.pack.program.TerrainPass;
 import dev.vitrail.pack.source.OpenedPack;
@@ -138,6 +140,10 @@ public final class PackRenderer implements AutoCloseable {
 	private final PackProgram.Terrain terrain;
 	private final Map<String, PackPipeline> pipelines = new LinkedHashMap<>();
 	private final Map<String, UniformBlock> blocks = new HashMap<>();
+	private final Map<String, PackProgram.Loaded> shadowComposites = new LinkedHashMap<>();
+	private final Map<String, PackPipeline> shadowCompositePipelines = new LinkedHashMap<>();
+	private final Map<String, UniformBlock> shadowCompositeBlocks = new HashMap<>();
+	private final Map<String, Map<Integer, Boolean>> shadowFlips = new HashMap<>();
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
 	private final Map<TerrainPass, UniformBlock> terrainBlocks = new EnumMap<>(TerrainPass.class);
 	private final RenderPasses renderPasses = new RenderPasses();
@@ -190,7 +196,22 @@ public final class PackRenderer implements AutoCloseable {
 						PackPipeline.Kind.QUAD, null));
 				this.blocks.put(entry.getKey(), block(entry.getKey(), entry.getValue(), this.values.catalog()));
 			}
-			if (this.terrain != null) {
+			// TODO-VERIFY: confirm shadowcomp toggles, fallback and descriptor availability with real packs.
+			this.shadowComposites.putAll(PackProgram.loadShadowComposites(this.opened, this.chain.place()));
+			for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+				String name = entry.getKey();
+				this.shadowCompositePipelines.put(name, new PackPipeline(name, entry.getValue().program(), compiler,
+						PackPipeline.Kind.QUAD, null));
+				this.shadowCompositeBlocks.put(name, block(name, entry.getValue(), this.values.catalog()));
+			}
+			for (ShaderProperties.FlipDirective flip : this.opened.properties().flips(this.opened.settings().globalDefines(this.opened.options()))) {
+				if (!flip.program().startsWith("shadowcomp")) continue;
+				TargetName.index(flip.buffer()).ifPresent(index -> {
+					if (index < this.chain.targets().shadowCeiling()) {
+						this.shadowFlips.computeIfAbsent(flip.program(), unused -> new HashMap<>()).put(index, flip.value());
+					}
+				});
+			}			if (this.terrain != null) {
 				for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
 					String name = entry.getKey().name().toLowerCase(Locale.ROOT) + ":" + entry.getValue().path();
 					this.terrainPipelines.put(entry.getKey(), new PackPipeline(name, entry.getValue().program(), compiler,
@@ -216,6 +237,12 @@ public final class PackRenderer implements AutoCloseable {
 			this.noSpecular = uploaded(1, 1, new byte[] {0, 0, 0, 0}, true);
 			this.shadow = new ShadowMaps(this.values.shadowResolution(), shadowNamed(), this.values.shadowColours(),
 					this.values.shadowDepths());
+			for (PackProgram.Loaded loaded : this.shadowComposites.values()) {
+				for (int index : shadowWrites(loaded)) this.shadow.alternateColour(index);
+			}
+			for (Map<Integer, Boolean> flips : this.shadowFlips.values()) {
+				for (int index : flips.keySet()) { this.shadow.colour(index); this.shadow.alternateColour(index); }
+			}
 			logPlan(System.nanoTime() - start);
 			built = true;
 		} finally {
@@ -225,6 +252,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	private void closePartly() {
 		if (this.meshPrograms != null) this.meshPrograms.close();
+		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.terrainPipelines.values().forEach(PackPipeline::close);
 		closeOpened();
@@ -258,6 +286,7 @@ public final class PackRenderer implements AutoCloseable {
 	/** Every shadow colour the pack samples or a shadow program writes. */
 	private Set<Integer> shadowNamed() {
 		Set<Integer> named = new HashSet<>(this.chain.targets().shadowAllocated());
+		for (PackProgram.Loaded loaded : this.shadowComposites.values()) named.addAll(shadowWrites(loaded));
 		if (this.terrain != null) {
 			for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
 				if (entry.getKey().shadow()) named.addAll(shadowWrites(entry.getValue()));
@@ -1387,6 +1416,8 @@ public final class PackRenderer implements AutoCloseable {
 	public void close() {
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.pipelines.clear();
+		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
+		this.shadowCompositePipelines.clear();
 		this.terrainPipelines.values().forEach(PackPipeline::close);
 		this.terrainPipelines.clear();
 		this.renderPasses.close();
