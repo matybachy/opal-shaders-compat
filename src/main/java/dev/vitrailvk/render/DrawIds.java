@@ -8,6 +8,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.monster.ZombieVillager;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.SolidBucketItem;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.nio.ByteBuffer;
@@ -35,8 +37,14 @@ public record DrawIds(int entity, int blockEntity, int item, Kind kind) {
 	}
 
 	DrawIds withItem(ItemStack stack) {
+		if (stack.isEmpty()) return this;
+		// Iris identifies block items by block-state ID and marks the block-entity lane as one.
+		if (stack.getItem() instanceof BlockItem block && !(stack.getItem() instanceof SolidBucketItem)) {
+			int id = BlockStateIds.id(block.getBlock().defaultBlockState());
+			return new DrawIds(this.entity, 1, id < 0 ? 0 : id, this.kind);
+		}
 		return new DrawIds(this.entity, this.blockEntity,
-				stack.isEmpty() ? -1 : PackNameIds.item(BuiltInRegistries.ITEM.getKey(stack.getItem())), this.kind);
+				PackNameIds.item(BuiltInRegistries.ITEM.getKey(stack.getItem())), this.kind);
 	}
 
 	/** The shader sees Iris's unsigned-short lanes, widened to the pipeline's unsigned integers. */

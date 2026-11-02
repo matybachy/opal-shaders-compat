@@ -39,6 +39,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.vulkanmod.Initializer;
 import net.vulkanmod.gl.GlTexture;
@@ -288,6 +289,9 @@ public final class PackRenderer implements AutoCloseable {
 		drawIds.push(active == null ? DrawIds.NONE : DrawIds.blockEntity(entity.getBlockState()));
 	}
 
+	public static void pushItem(ItemStack item) {
+		drawIds.push(active == null ? DrawIds.NONE : currentDrawIds().withItem(item));
+	}
 	public static void popDrawIds() {
 		drawIds.pop();
 	}

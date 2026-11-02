@@ -27,4 +27,4 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - TODO-VERIFY: překlad mesh programů a jejich cílové půlky za běhu.
 - TODO-VERIFY: DynamicTransforms používá aktuální matice a barvu; model offset je zatím nula.
 - TODO-VERIFY: BufferUploader směruje okamžité sky/částice/počasí/mraky; ověřit mixin pořadí a životnost. statické VBO oblohy/mraků zachyceno; entity a rozdělení ruky chybí.
-- TODO-VERIFY: VBO kopie a synchronizace; ověřit ID, typ batchů a třídění; smíšené entity/BER batche zatím zůstávají VMR.
+- TODO-VERIFY: VBO kopie a synchronizace; ověřit ID entit/předmětů, typ batchů a třídění; smíšené entity/BER batche zatím zůstávají VMR.

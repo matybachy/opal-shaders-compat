@@ -14,6 +14,7 @@
     "MeshDataMixin",
     "VertexBufferMixin",
     "EntityRenderDispatcherMixin",
+    "ItemRendererMixin",
     "BlockEntityRenderDispatcherMixin",
     "CustomVertexFormatMixin",
     "TerrainBufferBuilderMixin",
