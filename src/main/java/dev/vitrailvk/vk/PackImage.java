@@ -2,6 +2,7 @@ package dev.vitrailvk.vk;
 
 import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import net.vulkanmod.vulkan.queue.GraphicsQueue;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
@@ -72,6 +73,25 @@ public final class PackImage extends VulkanImage {
 	}
 
 	public int depth() { return this.depth; }
+
+	/** Upload during pack loading; wait for this transfer before releasing its staging allocation. */
+	public void upload(byte[] pixels) {
+		try (HostBuffer staging = new HostBuffer(pixels.length, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 4);
+				MemoryStack stack = MemoryStack.stackPush()) {
+			staging.view(0, pixels.length).put(pixels);
+			var commands = GraphicsQueue.INSTANCE.beginCommands();
+			VkCommandBuffer cmd = commands.getHandle();
+			transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+			VkBufferImageCopy.Buffer copy = VkBufferImageCopy.calloc(1, stack);
+			copy.imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
+			copy.imageExtent().set(this.width, this.height, this.depth);
+			vkCmdCopyBufferToImage(cmd, staging.handle(), getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
+			transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			long fence = GraphicsQueue.INSTANCE.submitCommands(commands);
+			Vk.check(vkWaitForFences(Vk.device(), fence, true, Long.MAX_VALUE), "pack image upload");
+			commands.reset();
+		}
+	}
 
 	@Override
 	public long getSampler() { return this.packSampler; }

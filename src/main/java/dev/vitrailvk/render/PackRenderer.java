@@ -145,6 +145,7 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<String, UniformBlock> shadowCompositeBlocks = new HashMap<>();
 	private final Map<String, Map<Integer, Boolean>> shadowFlips = new HashMap<>();
 	private final Map<String, String> viewportScales = new HashMap<>();
+	private TextureImages textureImages;
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
 	private final Map<TerrainPass, UniformBlock> terrainBlocks = new EnumMap<>(TerrainPass.class);
 	private final RenderPasses renderPasses = new RenderPasses();
@@ -238,6 +239,7 @@ public final class PackRenderer implements AutoCloseable {
 			// What Iris binds when the resource pack ships no normal or specular map: a flat normal, nothing.
 			this.flatNormal = uploaded(1, 1, new byte[] {(byte) 127, (byte) 127, (byte) 255, (byte) 255}, true);
 			this.noSpecular = uploaded(1, 1, new byte[] {0, 0, 0, 0}, true);
+			this.textureImages = new TextureImages(this.opened);
 			Set<Integer> shadowMipmapped = new HashSet<>();
 			for (String name : this.shadowComposites.keySet()) shadowMipmapped.addAll(shadowMips(name));
 			this.shadow = new ShadowMaps(this.values.shadowResolution(), shadowNamed(), this.values.shadowColours(),
@@ -256,6 +258,7 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private void closePartly() {
+		if (this.textureImages != null) this.textureImages.close();
 		if (this.meshPrograms != null) this.meshPrograms.close();
 		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
 		this.pipelines.values().forEach(PackPipeline::close);
@@ -1399,6 +1402,9 @@ public final class PackRenderer implements AutoCloseable {
 
 	private VulkanImage sampled(String sampler, PackProgram.Loaded loaded, List<VulkanImage> outputs,
 			VulkanImage atlas, VulkanImage lightmap) {
+		String program = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
+		VulkanImage custom = this.textureImages.resolve(program, sampler);
+		if (custom != null) return custom;
 		if (atlas != null && ATLAS.contains(sampler)) return atlas;
 		if (lightmap != null && LIGHTMAP.equals(sampler)) return lightmap;
 		if ("normals".equals(sampler)) return this.flatNormal;
@@ -1503,6 +1509,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	@Override
 	public void close() {
+		if (this.textureImages != null) this.textureImages.close();
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.pipelines.clear();
 		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
