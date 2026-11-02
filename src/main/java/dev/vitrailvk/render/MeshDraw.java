@@ -28,12 +28,14 @@ final class MeshDraw {
 
 	/** Copies before the caller releases MeshData. Returns null for an empty mesh. */
 	static MeshDraw copy(FrameArena arena, MeshData mesh) {
-		MeshData.DrawState state = mesh.drawState();
+		return copy(arena, mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer());
+	}
+
+	static MeshDraw copy(FrameArena arena, MeshData.DrawState state, ByteBuffer sourceVertices, ByteBuffer sourceIndices) {
 		int vertices = state.vertexCount();
 		if (vertices <= 0) return null;
 		int vertexBytes = Math.multiplyExact(vertices, state.format().getVertexSize());
-		FrameArena.Slice vertexSlice = copyBytes(arena, mesh.vertexBuffer(), vertexBytes);
-		ByteBuffer sourceIndices = mesh.indexBuffer();
+		FrameArena.Slice vertexSlice = copyBytes(arena, sourceVertices, vertexBytes);
 		int topology = switch (state.mode()) {
 			case DEBUG_LINES, DEBUG_LINE_STRIP -> VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 			default -> VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

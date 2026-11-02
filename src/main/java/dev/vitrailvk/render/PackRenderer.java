@@ -333,7 +333,7 @@ public final class PackRenderer implements AutoCloseable {
 		var shader = RenderSystem.getShader();
 		if (shader == null) return false;
 		try {
-			return active.meshLayer(mesh, shader.getName(), DrawIds.NONE);
+			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(), DrawIds.NONE, RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
 		} catch (RuntimeException e) {
 			fail(e);
 			return false;
@@ -549,13 +549,14 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** Records a prepared immediate mesh into the pack targets once its program and outputs exist. */
 	// TODO-VERIFY: validate mesh pipeline state, target transitions and draw transforms in a live frame.
-	private boolean meshLayer(MeshData mesh, String shader, DrawIds ids) {
+	private boolean meshLayer(MeshData.DrawState state, ByteBuffer vertices, ByteBuffer indices, String shader,
+			DrawIds ids, Matrix4fc view, Matrix4fc projection) {
 		if (!this.frameOpen || this.targets == null || VRenderSystem.stencilTest || VRenderSystem.logicOp) return false;
 		var blend = PipelineState.blendInfo;
 		if (blend.enabled && (blend.blendOpRgb != VK_BLEND_OP_ADD || blend.blendOpAlpha != VK_BLEND_OP_ADD)) return false;
-		Families.Piece piece = Families.resolve(shader, mesh.drawState().format(), phase(), blend.enabled);
+		Families.Piece piece = Families.resolve(shader, state.format(), phase(), blend.enabled);
 		if (piece == null || phase() == Families.Phase.SHADOW) return false;
-		Optional<MeshPrograms.Program> candidate = this.meshPrograms.resolve(piece, mesh.drawState().format(), this.deferredDone);
+		Optional<MeshPrograms.Program> candidate = this.meshPrograms.resolve(piece, state.format(), this.deferredDone);
 		if (candidate.isEmpty()) return false;
 		MeshPrograms.Program program = candidate.get();
 		List<VulkanImage> outputs = new ArrayList<>();
@@ -565,15 +566,15 @@ public final class PackRenderer implements AutoCloseable {
 			outputs.add(target.image(attachment.side()));
 		}
 		if (outputs.isEmpty()) return false;
-		MeshDraw draw = MeshDraw.copy(this.meshArena, mesh);
+		MeshDraw draw = MeshDraw.copy(this.meshArena, state, vertices, indices);
 		if (draw == null) return true;
 		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, ids, RenderSystem.getShaderLineWidth());
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
 			renderer.endRenderPass(cmd);
-			this.values.modelView(RenderSystem.getModelViewMatrix(), IDENTITY);
-			this.values.projection(RenderSystem.getProjectionMatrix());
+			this.values.modelView(view, IDENTITY);
+			this.values.projection(projection);
 			this.values.passAlphaTest(program.loaded().alphaTest().reference());
 			long set = allocateSet(stack, this.pool, program.pipeline().setLayout());
 			writeDescriptors(stack, set, program.pipeline(), program.loaded(), program.uniforms(), outputs,
