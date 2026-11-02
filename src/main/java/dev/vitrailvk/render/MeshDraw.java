@@ -88,6 +88,19 @@ final class MeshDraw {
 		return slice;
 	}
 
+	/** One instance-rate record answers attributes absent from the game's vertex format. */
+	static FrameArena.Slice constants(FrameArena arena, DrawIds ids, float lineWidth) {
+		FrameArena.Slice slice = arena.allocate(PackPipeline.Constants.STRIDE);
+		ByteBuffer out = slice.bytes();
+		for (int i = 0; i < PackPipeline.Constants.STRIDE; i++) out.put(i, (byte) 0);
+		for (int i = 0; i < 4; i++) out.putFloat(PackPipeline.Constants.COLOR + i * 4, 1.0F);
+		out.putFloat(PackPipeline.Constants.NORMAL + 8, 1.0F);
+		ids.put(out, PackPipeline.Constants.IDENTIFIERS);
+		out.putFloat(PackPipeline.Constants.TANGENT, 1.0F);
+		out.putFloat(PackPipeline.Constants.TANGENT + 12, 1.0F);
+		out.putFloat(PackPipeline.Constants.LINE_WIDTH, lineWidth);
+		return slice;
+	}
 	int topology() {
 		return this.topology;
 	}
