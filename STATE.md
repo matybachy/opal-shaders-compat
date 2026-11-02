@@ -23,7 +23,7 @@ Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit d
 - TODO-VERIFY: životnost FrameArena a opakované vykreslení levelu v jednom snímku za běhu.
 - TODO-VERIFY: Vulkanové vazby a životnost MeshDraw za běhu.
 - TODO-VERIFY: fáze oblohy, mraků a počasí včetně rozšíření NeoForge za běhu.
-- TODO-VERIFY: fáze částic a ruky za běhu; rozdělení ruky před/po deferred ještě chybí.
+- TODO-VERIFY: HandPass a filtrování rukou připraveny; zatím nezapojeny před/po deferred.
 - TODO-VERIFY: překlad mesh programů a jejich cílové půlky za běhu.
 - TODO-VERIFY: DynamicTransforms používá aktuální matice a barvu; model offset je zatím nula.
 - TODO-VERIFY: BufferUploader směruje okamžité sky/částice/počasí/mraky; ověřit mixin pořadí a životnost. statické VBO oblohy/mraků zachyceno; entity a rozdělení ruky chybí.

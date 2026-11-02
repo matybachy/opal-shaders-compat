@@ -8,6 +8,8 @@
     "TextureAtlasAccessor",
     "LevelRendererMixin",
     "GameRendererMixin",
+    "GameRendererAccessor",
+    "ItemInHandRendererMixin",
     "ParticleEngineMixin",
     "BufferUploaderMixin",
     "BufferBuilderMixin",
