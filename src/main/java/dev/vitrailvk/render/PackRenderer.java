@@ -291,6 +291,10 @@ public final class PackRenderer implements AutoCloseable {
 		drawIds.pop();
 	}
 
+	public static boolean capturesDrawIds() {
+		return active != null && active.frameOpen && !failedDuringFrame;
+	}
+
 	public static DrawIds currentDrawIds() {
 		return drawIds.isEmpty() ? DrawIds.NONE : drawIds.peek();
 	}

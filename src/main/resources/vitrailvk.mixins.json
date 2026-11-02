@@ -10,6 +10,8 @@
     "GameRendererMixin",
     "ParticleEngineMixin",
     "BufferUploaderMixin",
+    "BufferBuilderMixin",
+    "MeshDataMixin",
     "VertexBufferMixin",
     "EntityRenderDispatcherMixin",
     "BlockEntityRenderDispatcherMixin",
