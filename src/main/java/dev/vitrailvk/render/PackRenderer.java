@@ -211,7 +211,8 @@ public final class PackRenderer implements AutoCloseable {
 						this.shadowFlips.computeIfAbsent(flip.program(), unused -> new HashMap<>()).put(index, flip.value());
 					}
 				});
-			}			if (this.terrain != null) {
+			}
+			if (this.terrain != null) {
 				for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
 					String name = entry.getKey().name().toLowerCase(Locale.ROOT) + ":" + entry.getValue().path();
 					this.terrainPipelines.put(entry.getKey(), new PackPipeline(name, entry.getValue().program(), compiler,
@@ -879,7 +880,8 @@ public final class PackRenderer implements AutoCloseable {
 				ShadowFeatures.render(this.values, camera, tick, sections, casters);
 				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
 				renderer.endRenderPass(cmd);
-			}			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
+			}
+			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
 			if (!areas.isEmpty() && casters.translucent()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, RenderType.translucent(), TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
 			}
@@ -887,6 +889,7 @@ public final class PackRenderer implements AutoCloseable {
 			if (this.shadow.depth().mipLevels > 1) mipChain(cmd, stack, this.shadow.depth(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (this.shadow.depthNoTranslucent().mipLevels > 1) mipChain(cmd, stack, this.shadow.depthNoTranslucent(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (!areas.isEmpty()) ShadowAmortisation.drawn();
+			runShadowComposites(cmd, stack);
 			runPasses(cmd, stack, this.chain.chain().prepareEnd());
 		}
 	}
@@ -1029,7 +1032,48 @@ public final class PackRenderer implements AutoCloseable {
 		return renderPass;
 	}
 
+	/** Shadow composites have their own flip counter, independent of the main colour chain. */
+	// TODO-VERIFY: validate shadowcomp output parity, descriptor barriers and explicit flips in game.
+	private void runShadowComposites(VkCommandBuffer cmd, MemoryStack stack) {
+		this.shadowFlips.getOrDefault("shadowcomp_pre", Map.of()).forEach((index, flip) -> {
+			if (flip) this.shadow.flip(index);
+		});
+		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+			String name = entry.getKey();
+			PackPipeline pipeline = this.shadowCompositePipelines.get(name);
+			// Do not issue a draw with an unbound storage descriptor while item 6 is pending.
+			if (pipeline.slots.stream().anyMatch(slot -> slot.type() != SpirvModule.UNIFORM_BUFFER
+					&& slot.type() != SpirvModule.COMBINED_IMAGE_SAMPLER)) {
+				if (this.warned.add("shadowcomp-storage:" + name)) {
+					VitrailVk.LOGGER.warn("[pack] {} needs storage descriptors; shadow composite skipped", name);
+				}
+				continue;
+			}
+			List<Integer> writes = shadowWrites(entry.getValue());
+			List<VulkanImage> outputs = writes.stream().map(this.shadow::nextColour).toList();
+			long set = allocateSet(stack, this.pool, pipeline.setLayout());
+			writeDescriptors(stack, set, pipeline, entry.getValue(), this.shadowCompositeBlocks.get(name), outputs, null, null);
+			for (VulkanImage output : outputs) output.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			long pass = this.renderPasses.renderPass(outputs.stream().map(image -> image.format).toList(), true);
+			int size = this.shadow.resolution();
+			long framebuffer = this.renderPasses.framebuffer(pass, outputs.stream().mapToLong(PackRenderer::attachmentView).toArray(), size, size);
+			PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false, false,
+					VK_COMPARE_OP_ALWAYS, VK_CULL_MODE_NONE, 0xF, false, List.of(PackPipeline.Blend.OFF));
+			beginPass(cmd, stack, pass, framebuffer, size, size, false);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(pass, outputs.size(), style));
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
+			vkCmdBindVertexBuffers(cmd, 0, stack.longs(this.quad.handle()), stack.longs(0));
+			vkCmdDraw(cmd, 6, 1, 0, 0);
+			vkCmdEndRenderPass(cmd);
+			Map<Integer, Boolean> flips = this.shadowFlips.getOrDefault(name, Map.of());
+			for (int index : writes) if (flips.get(index) != Boolean.FALSE) this.shadow.flip(index);
+			// Iris applies explicit true flips after the implicit output flips, including duplicates.
+			flips.forEach((index, flip) -> { if (flip) this.shadow.flip(index); });
+		}
+	}
+
 	private void clearShadowMaps(VkCommandBuffer cmd, MemoryStack stack) {
+		this.shadow.resetFlips();
 		clearDepth(cmd, stack, this.shadow.depth());
 		clearDepth(cmd, stack, this.shadow.depthNoTranslucent());
 		VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack)
@@ -1047,6 +1091,11 @@ public final class PackRenderer implements AutoCloseable {
 			VulkanImage image = entry.getValue();
 			image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 			vkCmdClearColorImage(cmd, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, value, range);
+			VulkanImage alternate = this.shadow.alternateColours().get(entry.getKey());
+			if (alternate != null) {
+				alternate.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+				vkCmdClearColorImage(cmd, alternate.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, value, range);
+			}
 		}
 	}
 
@@ -1341,7 +1390,7 @@ public final class PackRenderer implements AutoCloseable {
 					return loaded.samplers().withoutTranslucents(sampler) ? this.shadow.depthNoTranslucent() : this.shadow.depth();
 				}
 				case SHADOW_COLOUR -> {
-					VulkanImage image = this.shadow.colour(binding.index());
+					VulkanImage image = this.shadow.sampledColour(binding.index());
 					if (!outputs.contains(image)) return image;
 				}
 				default -> { }
