@@ -1,0 +1,22 @@
+Third-party material in Vitrail VK
+==================================
+
+Vitrail VK is distributed under the GNU Lesser General Public License version 3 only, in LICENSE
+(with the GNU General Public License version 3 it refers to, in COPYING).
+
+Files that reproduce or adapt material of another project are listed here, with that project's
+terms. Every such file also names its origin in its header.
+
+Vitrail, https://github.com/avpbynf/Vitrail-Shaders
+Copyright the Vitrail contributors
+GNU Lesser General Public License version 3
+Vitrail's own NOTICE, which lists the material Vitrail adapted from Iris, is kept in
+NOTICE-vitrail and applies to every file taken from Vitrail.
+
+Iris, https://github.com/IrisShaders/Iris (branch 1.21.1)
+Copyright the Iris contributors
+GNU Lesser General Public License version 3
+
+VulkanMod Reforged, https://github.com/TrulyRin/VulkanMod-Reforged
+GNU Lesser General Public License version 3
+Not redistributed; a runtime dependency only.

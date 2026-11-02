@@ -1,0 +1,38 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="${mod_license}"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+authors="matyb"
+credits="Shader pack loader and GLSL translation adapted from Vitrail (LGPL-3.0); reference: Iris (LGPL-3.0); renderer: VulkanMod Reforged (LGPL-3.0)"
+description='''
+Runs OptiFine/Iris format shader packs on the VulkanMod Reforged renderer.
+'''
+
+[[mixins]]
+config="${mod_id}.mixins.json"
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="${neo_version_range}"
+    ordering="NONE"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="CLIENT"
+
+# Mixins reach into VulkanMod Reforged internals, so only the exact version it was built against is accepted.
+[[dependencies.${mod_id}]]
+    modId="vulkanmod"
+    type="required"
+    versionRange="[${vulkanmod_version}]"
+    ordering="AFTER"
+    side="CLIENT"

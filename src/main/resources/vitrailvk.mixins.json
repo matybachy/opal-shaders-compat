@@ -1,0 +1,23 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.vitrailvk.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "RendererMixin",
+    "TextureAtlasAccessor",
+    "LevelRendererMixin",
+    "GameRendererMixin",
+    "CustomVertexFormatMixin",
+    "TerrainBufferBuilderMixin",
+    "WorldRendererMixin",
+    "WorldRendererAccessor",
+    "DrawBuffersAccessor",
+    "DrawParametersAccessor",
+    "BiomesMixin",
+    "DeviceManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
