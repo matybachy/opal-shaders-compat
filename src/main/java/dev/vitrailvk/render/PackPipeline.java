@@ -2,11 +2,13 @@ package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
+import dev.vitrail.glsl.DistantVertex;
 import dev.vitrail.glsl.ProgramTranslator;
 import dev.vitrail.glsl.TranslatedUnit;
 import dev.vitrail.pack.model.ProgramStage;
 import dev.vitrailvk.compile.SpirvCompiler;
 import dev.vitrailvk.compile.SpirvModule;
+import dev.vitrailvk.dh.LodBuffer;
 import dev.vitrailvk.terrain.TerrainFormat;
 import dev.vitrailvk.vk.Vk;
 import org.lwjgl.system.MemoryStack;
@@ -54,6 +56,8 @@ final class PackPipeline implements AutoCloseable {
 		TERRAIN,
 		/** A vanilla vertex format, with what it has not got answered by {@link Constants}. */
 		MESH,
+		/** Distant Horizons' own LOD mesh. */
+		DISTANT,
 		COMPUTE
 	}
 
@@ -155,6 +159,17 @@ final class PackPipeline implements AutoCloseable {
 			"a_Tangent", new int[] {VK_FORMAT_R8G8B8A8_SNORM, TerrainFormat.OFFSET_TANGENT},
 			"a_MidBlock", new int[] {VK_FORMAT_R8G8B8A8_SINT, TerrainFormat.OFFSET_MID_BLOCK});
 
+	/**
+	 * Name to {format, offset} in DH's sixteen byte vertex. The position takes the word after it along, as the
+	 * meta it reads as its unused fourth component: three-component 16 bit formats are optional for vertex buffers.
+	 */
+	private static final Map<String, int[]> DISTANT_ATTRIBUTES = Map.of(
+			DistantVertex.POSITION, new int[] {VK_FORMAT_R16G16B16A16_UINT, 0},
+			DistantVertex.META, new int[] {VK_FORMAT_R16_UINT, 6},
+			DistantVertex.COLOUR, new int[] {VK_FORMAT_R8G8B8A8_UNORM, 8},
+			DistantVertex.MATERIAL, new int[] {VK_FORMAT_R8_UINT, 12},
+			DistantVertex.NORMAL, new int[] {VK_FORMAT_R8_UINT, 13});
+
 	private static final int QUAD_STRIDE = 20;
 
 	final String name;
@@ -199,6 +214,11 @@ final class PackPipeline implements AutoCloseable {
 			collect(byName, vertex, VK_SHADER_STAGE_VERTEX_BIT);
 			if (geometry != null) collect(byName, geometry, VK_SHADER_STAGE_GEOMETRY_BIT);
 			collect(byName, fragment, VK_SHADER_STAGE_FRAGMENT_BIT);
+			// One corner per section, and one set for all of them: a dynamic offset moves between draws.
+			if (kind == Kind.DISTANT) {
+				byName.computeIfPresent(DistantVertex.SECTION_BLOCK, (slotName, slot) -> new Slot(slot.binding(), slot.name(),
+						VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, slot.count(), slot.stages(), slot.dim(), slot.depth()));
+			}
 			this.slots = List.copyOf(byName.values());
 			renumber(vertex);
 			if (geometry != null) renumber(geometry);
@@ -371,6 +391,16 @@ final class PackPipeline implements AutoCloseable {
 						int[] element = TERRAIN_ATTRIBUTES.get(input);
 						if (element == null) {
 							throw new CompileException(this.name + " reads a vertex input the terrain mesh has not got: " + input);
+						}
+						attributes.add(new int[] {location, 0, element[0], element[1]});
+					});
+				}
+				case DISTANT -> {
+					stride = LodBuffer.STRIDE;
+					this.vertexInputs.forEach((input, location) -> {
+						int[] element = DISTANT_ATTRIBUTES.get(input);
+						if (element == null) {
+							throw new CompileException(this.name + " reads a vertex input the far terrain mesh has not got: " + input);
 						}
 						attributes.add(new int[] {location, 0, element[0], element[1]});
 					});

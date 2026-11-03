@@ -7,6 +7,7 @@ import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.load.PackLoader;
 import dev.vitrail.pack.model.AlphaTest;
 import dev.vitrail.pack.model.ProgramStage;
+import dev.vitrail.pack.option.EngineDefines;
 import dev.vitrail.pack.program.ChainFilter;
 import dev.vitrail.pack.program.ProgramSet;
 import dev.vitrail.pack.source.DimensionSet;
@@ -86,12 +87,17 @@ public final class PackCompileCheck {
 				if (!graphics.isEmpty()) programsAtPath.add(graphics);
 				for (Set<ProgramStage> stages : programsAtPath) {
 					Optional<ProgramTranslator.TranslatedProgram> program;
+					// A dh_ program is only ever loaded with the far terrain there, and written for that.
+					EngineDefines.Environment plain = EngineDefines.machine();
+					if (path.substring(path.lastIndexOf('/') + 1).startsWith("dh_")) EngineDefines.machine(withDistant(plain));
 					try {
 						program = translate(packPath, opened, path, stages);
 					} catch (Exception e) {
 						failures.add(new Failure(path, "translate", e.toString()));
 						LOGGER.error("[compile] {} {}: translation failed", packName, path, e);
 						continue;
+					} finally {
+						EngineDefines.machine(plain);
 					}
 					if (program.isEmpty()) {
 						LOGGER.info("[compile] {} {}: not served (stages {})", packName, path, stages);
@@ -124,6 +130,11 @@ public final class PackCompileCheck {
 		LOGGER.info("[compile] {}: {} programs, {}/{} units compiled, {} failures, {} ms", packName,
 				report.programs(), compiled, units, failures.size(), report.millis());
 		return report;
+	}
+
+	static EngineDefines.Environment withDistant(EngineDefines.Environment plain) {
+		return new EngineDefines.Environment(plain.mcVersion(), plain.os(), plain.vendorName(), plain.rendererName(),
+				plain.mipmapLevel(), true, plain.biomes(), plain.biomeCategories(), plain.textureFormat(), plain.bufferBlending());
 	}
 
 	/**
@@ -233,7 +244,8 @@ public final class PackCompileCheck {
 				List.of("Position", "UV0", "Color"), false));
 		for (String program : List.of("gbuffers_basic", "gbuffers_textured", "gbuffers_clouds", "gbuffers_lightning",
 				"gbuffers_beaconbeam", "gbuffers_entities", "gbuffers_entities_translucent", "gbuffers_spidereyes",
-				"gbuffers_block", "gbuffers_block_translucent", "gbuffers_hand", "gbuffers_hand_water", "shadow_entities")) {
+				"gbuffers_block", "gbuffers_block_translucent", "gbuffers_hand", "gbuffers_hand_water", "shadow",
+				"shadow_entities", "shadow_block", "shadow_cutout", "shadow_water", "shadow_lightning")) {
 			elements.add(same(program, AlphaTest.ONE_TENTH, VertexInputs.ENTITY));
 		}
 		return elements;

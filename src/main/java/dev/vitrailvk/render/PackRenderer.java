@@ -34,6 +34,9 @@ import dev.vitrail.uniform.UniformCatalog;
 import dev.vitrailvk.VitrailVk;
 import dev.vitrailvk.compile.SpirvCompiler;
 import dev.vitrailvk.compile.SpirvModule;
+import dev.vitrailvk.dh.DhSupport;
+import dev.vitrailvk.dh.LodBuffer;
+import dev.vitrailvk.dh.LodIndices;
 import dev.vitrailvk.mixin.DrawBuffersAccessor;
 import dev.vitrailvk.mixin.DrawParametersAccessor;
 import dev.vitrailvk.mixin.RendererAccessor;
@@ -158,6 +161,8 @@ public final class PackRenderer implements AutoCloseable {
 	private static boolean handsHandled;
 	private static boolean screenEffectPostponed;
 	private static boolean remeshOnLoad;
+	private static String dumpPrefix;
+	private static TargetDump dumping;
 	private static String lastError;
 	private static final Families.SkyOrder skyOrder = new Families.SkyOrder();
 	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
@@ -179,6 +184,10 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<String, String> viewportScales = new HashMap<>();
 	private final List<String> shadowCompositeOrder = new ArrayList<>();
 	private PackComputes computes;
+	private DistantPrograms distant;
+	private VulkanImage distantDepth;
+	private VulkanImage distantDepthNoWater;
+	private FrameArena.Slice sectionCorners;
 	private TextureImages textureImages;
 	private PackStorage storage;
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
@@ -244,6 +253,7 @@ public final class PackRenderer implements AutoCloseable {
 				this.blocks.put(entry.getKey(), block(entry.getKey(), entry.getValue(), this.values.catalog()));
 			}
 			this.computes = PackComputes.load(this.opened, this.chain, this.values, compiler);
+			if (DhSupport.ACTIVE) this.distant = DistantPrograms.load(this.opened, this.chain, this.values, compiler);
 			this.shadowComposites.putAll(PackProgram.loadShadowComposites(this.opened, this.chain.place()));
 			for (var iterator = this.shadowComposites.entrySet().iterator(); iterator.hasNext(); ) {
 				Map.Entry<String, PackProgram.Loaded> entry = iterator.next();
@@ -431,12 +441,17 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** {@code LevelRenderer.renderLevel} HEAD, on the render thread. */
 	public static void beginLevel(Matrix4fc modelView, Matrix4fc projection) {
+		if (dumping != null) {
+			dumping.close();
+			dumping = null;
+		}
 		if (failedDuringFrame) return;
 		drawingLevel = true;
 		solidHandIssued = false;
 		handsHandled = false;
 		LevelCapture.capture(modelView, projection);
 		ensureLoaded();
+		DhSupport.frame(active != null);
 		if (active != null) {
 			active.values.advance();
 			active.frameOpen = false;
@@ -479,7 +494,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (!drawing() || !drawingLevel) return false;
 		Families.Phase current = phase();
 		ShaderInstance shader = RenderSystem.getShader();
-		if (shader == null) return current == Families.Phase.SHADOW;
+		if (shader == null) return current.light();
 		DrawIds[] ids = ((MeshIds) (Object) mesh).vitrailvk$ids();
 		MeshData.DrawState state = mesh.drawState();
 		try {
@@ -493,7 +508,7 @@ public final class PackRenderer implements AutoCloseable {
 					kind == DrawIds.Kind.BLOCK_ENTITY ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL);
 		} catch (RuntimeException e) {
 			fail(e);
-			return current == Families.Phase.SHADOW;
+			return current.light();
 		}
 	}
 
@@ -508,6 +523,23 @@ public final class PackRenderer implements AutoCloseable {
 		if (vertices == null) return false;
 		try {
 			return active.storedMesh(access, vertices, view, projection, shader.getName());
+		} catch (RuntimeException e) {
+			fail(e);
+			return false;
+		}
+	}
+
+	/**
+	 * One half of Distant Horizons' terrain, from its {@code LodRenderer}.
+	 *
+	 * @param corners  xyz of each section's corner relative to the camera
+	 * @param sections the buffers of each section, near to far as DH lists them
+	 * @return whether a program of the pack drew it
+	 */
+	public static boolean drawDistant(boolean opaque, boolean light, float near, float far, float[] corners, LodBuffer[][] sections, int count) {
+		if (!drawing() || !active.frameOpen || active.distant == null || count == 0) return false;
+		try {
+			return active.distantHalf(opaque, light, near, far, corners, sections, count);
 		} catch (RuntimeException e) {
 			fail(e);
 			return false;
@@ -588,6 +620,11 @@ public final class PackRenderer implements AutoCloseable {
 		lastError = null;
 		remeshOnLoad = true;
 		if (active != null) failedDuringFrame = true;
+	}
+
+	/** For the autotest: every target of the next finished frame, as PNG files starting with this path. */
+	public static void requestDump(String prefix) {
+		dumpPrefix = prefix;
 	}
 
 	/** Why the last pack is not running, for the screen; the log has the rest. */
@@ -710,6 +747,10 @@ public final class PackRenderer implements AutoCloseable {
 			this.depth = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
 			this.depthNoTranslucent = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
 			this.depthNoHand = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
+			if (this.distant != null) {
+				this.distantDepth = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
+				this.distantDepthNoWater = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
+			}
 		}
 		// What this slot's last frame used is free again, its fence having been waited by VulkanMod. Not a
 		// second time within one frame, though: a mod that draws the level twice has commands recorded that
@@ -733,6 +774,10 @@ public final class PackRenderer implements AutoCloseable {
 		if (fresh) clearTargets(cmd, stack);
 		clearShadowMaps(cmd, stack);
 		if (!fresh) clearTargets(cmd, stack);
+		if (this.distantDepth != null) {
+			clearDepth(cmd, stack, this.distantDepth);
+			clearDepth(cmd, stack, this.distantDepthNoWater);
+		}
 		this.values.renderStage(RenderStage.NONE);
 		// Once for every size the targets take: what setup makes may live in them.
 		if (fresh) dispatch(cmd, stack, this.computes.setup(), null, 1, 1);
@@ -828,6 +873,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (this.deferredDone) return;
 		this.deferredDone = true;
 		copyDepth(cmd, stack, this.depth, this.depthNoTranslucent);
+		if (this.distantDepth != null) copyDepth(cmd, stack, this.distantDepth, this.distantDepthNoWater);
 		runPasses(cmd, stack, this.chain.chain().deferredEnd(), "deferred");
 	}
 
@@ -913,22 +959,26 @@ public final class PackRenderer implements AutoCloseable {
 
 	/** Begins a pass over the given targets and the world's depth; returns the render pass. */
 	private long beginGeometryPass(VkCommandBuffer cmd, MemoryStack stack, List<VulkanImage> outputs) {
+		return beginGeometryPass(cmd, stack, outputs, this.depth);
+	}
+
+	private long beginGeometryPass(VkCommandBuffer cmd, MemoryStack stack, List<VulkanImage> outputs, VulkanImage depthImage) {
 		for (VulkanImage output : outputs) {
 			output.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 		}
-		this.depth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+		depthImage.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 		List<Integer> formats = outputs.stream().map(image -> image.format).toList();
 		long renderPass = this.renderPasses.renderPass(formats, DEPTH_FORMAT, true);
 		long[] views = new long[outputs.size() + 1];
 		// A framebuffer may not be larger than any attachment; a scaled target only crops the draw.
-		int width = this.depth.width;
-		int height = this.depth.height;
+		int width = depthImage.width;
+		int height = depthImage.height;
 		for (int i = 0; i < outputs.size(); i++) {
 			views[i] = attachmentView(outputs.get(i));
 			width = Math.min(width, outputs.get(i).width);
 			height = Math.min(height, outputs.get(i).height);
 		}
-		views[outputs.size()] = this.depth.getImageView();
+		views[outputs.size()] = depthImage.getImageView();
 		long framebuffer = this.renderPasses.framebuffer(renderPass, views, width, height);
 		beginPass(cmd, stack, renderPass, framebuffer, width, height, false);
 		return renderPass;
@@ -963,7 +1013,7 @@ public final class PackRenderer implements AutoCloseable {
 	private PlannedMesh planMesh(String shader, VertexFormat format, VertexFormat.Mode mode, Families.Phase phase,
 			Matrix4fc view, Matrix4fc projection) {
 		if (!this.frameOpen || this.targets == null) return null;
-		boolean light = phase == Families.Phase.SHADOW;
+		boolean light = phase.light();
 		PipelineState.BlendInfo blend = PipelineState.blendInfo;
 		// What a pack pipeline here has no state for. None of the game's world geometry asks for it.
 		if (!light && (VRenderSystem.stencilTest || VRenderSystem.logicOp || blend.enabled
@@ -1234,9 +1284,18 @@ public final class PackRenderer implements AutoCloseable {
 				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
 				renderer.endRenderPass(cmd);
 			}
+			boolean distantCasts = map && this.distant != null && this.values.dhShadow();
+			if (distantCasts && casters.terrain()) {
+				DhSupport.shadow(false);
+				renderer.endRenderPass(cmd);
+			}
 			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
 			if (!areas.isEmpty() && casters.translucent()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
+			}
+			if (distantCasts && casters.translucent()) {
+				DhSupport.shadow(true);
+				renderer.endRenderPass(cmd);
 			}
 			if (this.shadow.depth().mipLevels > 1) mipChain(cmd, stack, this.shadow.depth(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (this.shadow.depthNoTranslucent().mipLevels > 1) mipChain(cmd, stack, this.shadow.depthNoTranslucent(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
@@ -1244,6 +1303,88 @@ public final class PackRenderer implements AutoCloseable {
 			runShadowComposites(cmd, stack);
 			runPasses(cmd, stack, this.chain.chain().prepareEnd(), "prepare");
 		}
+	}
+
+	private boolean distantHalf(boolean opaque, boolean light, float near, float far, float[] corners, LodBuffer[][] sections, int count) {
+		DistantPrograms.Half half = DistantPrograms.Half.of(opaque, light);
+		DistantPrograms.Program program = this.distant.program(half);
+		if (program == null) return false;
+		PackPipeline pipeline = program.pipeline();
+		Renderer renderer = Renderer.getInstance();
+		VkCommandBuffer cmd = Renderer.getCommandBuffer();
+		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+			renderer.endRenderPass(cmd);
+			// The water reads what the deferred stage made of the world, as the world's own water does.
+			if (half == DistantPrograms.Half.WATER) deferred(cmd, stack);
+
+			List<VulkanImage> outputs = new ArrayList<>();
+			if (light) {
+				for (int index : shadowWrites(program.loaded())) outputs.add(this.shadow.colour(index));
+			} else {
+				for (ChainPlan.Attachment attachment : program.pass().attachments()) {
+					PackTargets.Target target = this.targets.target(attachment.target());
+					if (target == null) return false;
+					outputs.add(target.image(attachment.side()));
+				}
+			}
+
+			this.values.passAlphaTest(0.0F);
+			this.values.renderStage(opaque ? RenderStage.TERRAIN_SOLID : RenderStage.TERRAIN_TRANSLUCENT);
+			if (!light) {
+				// DH's volume: the frame's matrix with its own planes, forward over 0..1 like everything drawn here.
+				Matrix4f projection = new Matrix4f(LevelCapture.projection());
+				projection.m22(far / (near - far));
+				projection.m32(far * near / (near - far));
+				projection.m02(0.0F);
+				projection.m12(0.0F);
+				this.values.modelView(LevelCapture.modelView(), IDENTITY);
+				this.values.projection(projection);
+				this.values.passColour(WHITE);
+			}
+
+			// Each section's corner in a slot of its own, moved to with a dynamic offset.
+			FrameArena.Slice slots = this.ubo.allocate(count * UBO_ALIGNMENT);
+			ByteBuffer bytes = slots.bytes().order(ByteOrder.LITTLE_ENDIAN);
+			for (int i = 0; i < count; i++) {
+				bytes.putFloat(i * UBO_ALIGNMENT, corners[i * 3]);
+				bytes.putFloat(i * UBO_ALIGNMENT + 4, corners[i * 3 + 1]);
+				bytes.putFloat(i * UBO_ALIGNMENT + 8, corners[i * 3 + 2]);
+			}
+			this.sectionCorners = slots;
+
+			VulkanImage depthImage = light ? this.shadow.depth() : this.distantDepth;
+			long set = allocateSet(stack, pipeline.setLayout());
+			writeDescriptors(stack, set, pipeline, program.loaded(), program.block(), outputs, depthImage, new GameImages(null, null, null), null);
+
+			String bareName = half.program;
+			List<PackPipeline.Blend> blends = blends(bareName, bareName, outputs.size(), half.water && !light ? PackPipeline.Blend.TRANSLUCENT : PackPipeline.Blend.OFF);
+			// DH culls its opaque half, a pack's water stays seen from below, and nothing is culled in the map.
+			int cull = opaque && !light ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+			PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, true, true,
+					VK_COMPARE_OP_LESS_OR_EQUAL, cull, 0xF, false, blends);
+			long renderPass = light ? beginShadowPass(cmd, stack, outputs) : beginGeometryPass(cmd, stack, outputs, depthImage);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(renderPass, outputs.size(), style));
+			vkCmdBindIndexBuffer(cmd, LodIndices.handle(), 0, VK_INDEX_TYPE_UINT32);
+			LongBuffer sets = stack.longs(set);
+			java.nio.IntBuffer offsets = stack.mallocInt(1);
+			LongBuffer vertexBuffer = stack.mallocLong(1);
+			LongBuffer vertexOffset = stack.mallocLong(1);
+			// Blended far to near, as DH lists them the other way.
+			for (int s = 0; s < count; s++) {
+				int section = half.water ? count - 1 - s : s;
+				offsets.put(0, section * UBO_ALIGNMENT);
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, sets, offsets);
+				for (LodBuffer buffer : sections[section]) {
+					if (buffer == null || !buffer.ready()) continue;
+					vertexBuffer.put(0, buffer.handle());
+					vertexOffset.put(0, buffer.offset());
+					vkCmdBindVertexBuffers(cmd, 0, vertexBuffer, vertexOffset);
+					vkCmdDrawIndexed(cmd, buffer.indices(), 1, 0, 0, 0);
+				}
+			}
+			vkCmdEndRenderPass(cmd);
+		}
+		return true;
 	}
 
 	/** Whether the pack has anything to draw the map with; the map then stays clear, as in Iris. */
@@ -1453,12 +1594,34 @@ public final class PackRenderer implements AutoCloseable {
 			} else {
 				present(cmd, stack, screen);
 			}
+			if (dumpPrefix != null) dumpTargets(cmd, stack);
 			screen.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 		}
 		if (!this.announced) {
 			this.announced = true;
 			VitrailVk.LOGGER.info("[pack] first frame drawn at {}x{}", screen.width, screen.height);
 		}
+	}
+
+	private void dumpTargets(VkCommandBuffer cmd, MemoryStack stack) {
+		String prefix = dumpPrefix;
+		dumpPrefix = null;
+		TargetDump dump = new TargetDump();
+		for (PackTargets.Target target : this.targets.all()) {
+			if (target.format().integer()) continue;
+			dump.colour(cmd, stack, target.main(), prefix + "_colortex" + target.index() + ".png");
+			if (target.alt() != null) dump.colour(cmd, stack, target.alt(), prefix + "_colortex" + target.index() + "_alt.png");
+		}
+		dump.depth(cmd, stack, this.depth, prefix + "_depthtex0.png");
+		dump.depth(cmd, stack, this.depthNoTranslucent, prefix + "_depthtex1.png");
+		if (this.distantDepth != null) dump.depth(cmd, stack, this.distantDepth, prefix + "_dhDepthTex0.png");
+		if (shadowWanted()) {
+			dump.depth(cmd, stack, this.shadow.depth(), prefix + "_shadowtex0.png");
+			for (Map.Entry<Integer, VulkanImage> entry : this.shadow.colours().entrySet()) {
+				dump.colour(cmd, stack, entry.getValue(), prefix + "_shadowcolor" + entry.getKey() + ".png");
+			}
+		}
+		dumping = dump;
 	}
 
 	/**
@@ -1720,6 +1883,8 @@ public final class PackRenderer implements AutoCloseable {
 					write.pBufferInfo(VkDescriptorBufferInfo.calloc(1, stack).buffer(slice.buffer()).offset(slice.offset())
 							.range(slice.bytes().capacity()));
 				}
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC -> write.pBufferInfo(VkDescriptorBufferInfo.calloc(1, stack)
+						.buffer(this.sectionCorners.buffer()).offset(this.sectionCorners.offset()).range(16));
 				case SpirvModule.COMBINED_IMAGE_SAMPLER -> {
 					VulkanImage image = sampled(slot, loaded, outputs, attachedDepth, game);
 					int layout = stored.contains(image) ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1851,6 +2016,11 @@ public final class PackRenderer implements AutoCloseable {
 					// GL lets a draw read the depth it is writing; here that is a layout the image is not in.
 					return image == attachedDepth ? this.depthNoTranslucent : image;
 				}
+				case DISTANT_DEPTH -> {
+					VulkanImage image = SamplerPlan.distantWithoutWater(sampler) ? this.distantDepthNoWater : this.distantDepth;
+					// One drawing into it reads the other; with no far terrain at all the name reads the far plane.
+					if (image != null) return image == attachedDepth ? this.distantDepthNoWater : image;
+				}
 				case NOISE -> {
 					return this.noise;
 				}
@@ -1870,8 +2040,8 @@ public final class PackRenderer implements AutoCloseable {
 
 	private static long createPool() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(8, stack);
-			for (int type = 0; type < 8; type++) {
+			VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(9, stack);
+			for (int type = 0; type <= VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; type++) {
 				sizes.get(type).type(type).descriptorCount(type == SpirvModule.COMBINED_IMAGE_SAMPLER ? 32768 : 8192);
 			}
 			VkDescriptorPoolCreateInfo info = VkDescriptorPoolCreateInfo.calloc(stack).sType$Default()
@@ -1929,12 +2099,14 @@ public final class PackRenderer implements AutoCloseable {
 	private void freeTargets() {
 		if (this.targets != null) this.targets.close();
 		this.targets = null;
-		for (VulkanImage image : new VulkanImage[] {this.depth, this.depthNoTranslucent, this.depthNoHand}) {
+		for (VulkanImage image : new VulkanImage[] {this.depth, this.depthNoTranslucent, this.depthNoHand, this.distantDepth, this.distantDepthNoWater}) {
 			if (image != null) image.free();
 		}
 		this.depth = null;
 		this.depthNoTranslucent = null;
 		this.depthNoHand = null;
+		this.distantDepth = null;
+		this.distantDepthNoWater = null;
 	}
 
 	/** Everything this pack made, whichever part of it the constructor got to. */
@@ -1943,6 +2115,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (this.storage != null) this.storage.close();
 		if (this.textureImages != null) this.textureImages.close();
 		if (this.computes != null) this.computes.close();
+		if (this.distant != null) this.distant.close();
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.pipelines.clear();
 		this.shadowCompositePipelines.values().forEach(PackPipeline::close);

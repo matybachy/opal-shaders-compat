@@ -70,6 +70,8 @@ final class ShadowFeatures {
 				}
 			}
 			if (casters.anyBlockEntity()) {
+				buffers.endBatch();
+				PackRenderer.pushPhase(Families.Phase.SHADOW_BLOCK_ENTITIES);
 				Set<BlockEntity> blocks = new LinkedHashSet<>();
 				for (RenderSection section : sections) blocks.addAll(section.getCompiledSection().getBlockEntities());
 				mc.levelRenderer.iterateVisibleBlockEntities(blocks::add);
@@ -87,6 +89,8 @@ final class ShadowFeatures {
 						poses.popPose();
 					}
 				}
+				buffers.endBatch();
+				PackRenderer.popPhase();
 			}
 			buffers.endBatch();
 		} finally {

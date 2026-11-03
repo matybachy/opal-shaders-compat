@@ -22,6 +22,8 @@ public final class PackCompileTool {
 		Path dump = gameDir.resolve("vitrailvk-debug").resolve("compile");
 		Vitrail.initClient(new ToolPlatform(gameDir));
 		EngineDefines.machine(EngineDefines.Environment.of(GameVersion.MC_VERSION));
+		// -PdhVariant=true: every program as it reads with the far terrain there, DISTANT_HORIZONS defined.
+		if (Boolean.getBoolean("vitrailvk.dhVariant")) EngineDefines.machine(PackCompileCheck.withDistant(EngineDefines.machine()));
 
 		List<Path> packs = new ArrayList<>();
 		Path dir = gameDir.resolve("shaderpacks");

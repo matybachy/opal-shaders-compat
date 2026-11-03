@@ -30,6 +30,21 @@ if (!vulkanModJar.isFile()) {
     tmp.renameTo(vulkanModJar)
 }
 
+// Distant Horizons: compiled against, never shipped. The bridge in dev.vitrailvk.dh stands in for its internal
+// renderer classes, so this is the one version it knows (see DhSupport).
+def distantHorizonsJar = file("libs/DistantHorizons-${project.dh_version}-fabric-neoforge.jar")
+if (!distantHorizonsJar.isFile()) {
+    logger.lifecycle("Downloading ${project.dh_url}")
+    def tmp = new File(distantHorizonsJar.path + '.part')
+    new URL(project.dh_url).withInputStream { input -> tmp.withOutputStream { it << input } }
+    def digest = java.security.MessageDigest.getInstance('SHA-256').digest(tmp.bytes).encodeHex().toString()
+    if (digest != project.dh_sha256) {
+        tmp.delete()
+        throw new GradleException("Distant Horizons jar checksum mismatch: ${digest}")
+    }
+    tmp.renameTo(distantHorizonsJar)
+}
+
 // Validation layers for dev runs: the Khronos layer from tools/vvl (see PORTING.md), enabled through the
 // Vulkan loader's environment so VulkanMod Reforged needs no change. -Pvalidation=false turns it off.
 def validationDir = file('tools/vvl')
@@ -91,6 +106,7 @@ repositories {
 dependencies {
     // On the runtime classpath as a mod jar; its own jar-in-jar carries LWJGL Vulkan, shaderc and VMA.
     implementation files(vulkanModJar)
+    compileOnly files(distantHorizonsJar)
 
     compileOnly "org.lwjgl:lwjgl-vulkan:${project.lwjgl_version}"
     compileOnly "org.lwjgl:lwjgl-shaderc:${project.lwjgl_version}"
@@ -123,6 +139,7 @@ tasks.register('checkPacks', JavaExec) {
     systemProperty 'org.slf4j.simpleLogger.defaultLogLevel', providers.gradleProperty('logLevel').getOrElse('info')
     systemProperty 'org.slf4j.simpleLogger.showDateTime', 'false'
     systemProperty 'vitrailvk.dumpAll', providers.gradleProperty('dumpAll').getOrElse('false')
+    systemProperty 'vitrailvk.dhVariant', providers.gradleProperty('dhVariant').getOrElse('false')
 }
 
 def resourceProps = [

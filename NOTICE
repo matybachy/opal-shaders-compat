@@ -30,3 +30,8 @@ VulkanMod Reforged, https://github.com/TrulyRin/VulkanMod-Reforged
 GNU Lesser General Public License version 3
 Not redistributed; a runtime dependency only. The mixins in dev.vitrailvk.mixin reach into its classes,
 and render/MeshDraw.java draws with its index buffers using the counts its Drawer uses.
+
+Distant Horizons, https://gitlab.com/distant-horizons-team/distant-horizons (3.3.3)
+GNU Lesser General Public License version 3
+Not redistributed; compiled against. src/main/java/dev/vitrailvk/dh implements its renderer interfaces and
+copies none of its code. Its vertex layout and quad order are followed in LodBuffer and PackPipeline.

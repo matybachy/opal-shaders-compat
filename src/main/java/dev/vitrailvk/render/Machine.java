@@ -4,6 +4,7 @@ import dev.vitrail.pack.option.EngineDefines;
 import dev.vitrail.render.BiomeClassifier;
 import dev.vitrail.uniform.BiomeCategory;
 import dev.vitrailvk.GameVersion;
+import dev.vitrailvk.dh.DhSupport;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.biome.Biomes;
@@ -40,7 +41,7 @@ final class Machine {
 		List<String> categories = Arrays.stream(BiomeCategory.values())
 				.map(category -> category.name().toUpperCase(Locale.ROOT)).toList();
 		EngineDefines.machine(new EngineDefines.Environment(GameVersion.MC_VERSION, os(), vendor, renderer, mipmap,
-				false, biomes, categories, null, independentBlend()));
+				DhSupport.ACTIVE, biomes, categories, null, independentBlend()));
 	}
 
 	private static boolean independentBlend() {

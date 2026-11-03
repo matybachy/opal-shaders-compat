@@ -2,6 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "dev.vitrailvk.mixin",
+  "plugin": "dev.vitrailvk.mixin.VitrailVkMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
     "RendererMixin",
@@ -30,7 +31,9 @@
     "DrawBuffersAccessor",
     "DrawParametersAccessor",
     "BiomesMixin",
-    "DeviceManagerMixin"
+    "DeviceManagerMixin",
+    "DhDependencySetupMixin",
+    "DhMainMixin"
   ],
   "injectors": {
     "defaultRequire": 1

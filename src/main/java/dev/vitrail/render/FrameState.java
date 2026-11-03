@@ -282,8 +282,16 @@ public final class FrameState implements WorldState {
 		LevelCapture.forwardToReversed(LevelCapture.projection(), this.reversedProjection);
 		this.view.advance(LevelCapture.modelView(), IDENTITY, this.reversedProjection,
 				renderDistance * 16.0F, renderDistance);
-		this.view.advanceDistant(ViewMatrices.FALLBACK_PLANE, ViewMatrices.FALLBACK_PLANE, -1);
-		this.view.advanceDistantVolume(0.0F, 0.0F);
+		// VitrailVK: the row of the volume Distant Horizons is drawn in, in this reversed spelling.
+		float[] distant = dev.vitrailvk.dh.DhSupport.planes();
+		if (distant != null) {
+			float near = distant[0], far = distant[1];
+			this.view.advanceDistant(near, far, (int) distant[2]);
+			this.view.advanceDistantVolume(near / (far - near), near * far / (far - near));
+		} else {
+			this.view.advanceDistant(ViewMatrices.FALLBACK_PLANE, ViewMatrices.FALLBACK_PLANE, -1);
+			this.view.advanceDistantVolume(0.0F, 0.0F);
+		}
 		float shadowAngle = sunAngle(isDay()) / 360.0F;
 		boolean drewLastFrame = ShadowAmortisation.beginFrame(this.shift.unshifted(), shadowAngle, false);
 		this.view.advanceShadow(shadowAngle, this.directives.sunPathRotation(),

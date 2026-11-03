@@ -17,9 +17,9 @@ ověřeno proti zdrojům, ne funkční. Poslední skutečný běh je `test_terra
 | 5 Obloha, entity, ruka, částice, počasí, mraky | hotovo v kódu |
 | 6 Custom textury, image.*, SSBO, compute | hotovo v kódu |
 | 7 GUI výběru packu a nastavení | hotovo v kódu |
-| A Flywheel, Create, Colorwheel | nezačato |
-| B Ostatní mody včetně Mekanismu | obecná cesta entit a BER existuje, mapování nezačato |
-| C Distant Horizons včetně `dh_*` | nezačato (`dh/DhDepth`, `glsl/DistantVertex` jsou převzaté a nezapojené) |
+| A Flywheel, Create | záchranná varianta hotová v kódu: Flywheel off, Create přes BER; vlastní backend ne |
+| B Ostatní mody včetně Mekanismu | hotovo v kódu: mapování podle tabulky Iris, bajtkód zkontrolovaný |
+| C Distant Horizons včetně `dh_*` | hotovo v kódu: vlastní definice renderu DH na Vulkanu |
 
 **Obnova 2. 11. 2026:** původní složka `vulkan-shaders` i s lokální git historií (M1–M5) zmizela
 z disku (nebyla ani v Koši). Projekt byl obnoven z konverzace a stejných revizí referencí, historie
@@ -36,6 +36,13 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
   přeskakoval grafickou půlku.
 - `scripts/autotest.sh [pack] [-Pautotest.options=A=b,C=d] [-Pautotest.camera=x,z,yaw,pitch,výška]
   [-Pautotest.time=6000]`: build, klient v autotest režimu, souhrn. Výstupy jsou v `run/autotest/`.
+- `scripts/instance.py create|run NAME`: čistá instance s NeoForge v `test-instance/NAME` (mimo git, jary do `mods/`),
+  bez dev runu. `run` umí `--pack`, `--options`, `--script`, `--camera`, `--time`. Výstupy v `test-instance/NAME/autotest`.
+- Skript autotestu (`--script`, řádky: `cmd`, `wait`, `settle`, `shot`, `dump`, `fps`, `gui`, `graphics`, `resize`,
+  `minimize`, `restore`, `pack`, `reload`, `screen`, `click`, `press`, `error`, `note`, `quit`), viz `dev/AutoTest`.
+  `dump` uloží všechny targety aktuálního packu jako PNG (`render/TargetDump`).
+- `scripts/glscan.py jar...`: přímá volání GL v bajtkódu modu, i ve vnořených jarech.
+- `./gradlew checkPacks -PdhVariant=true`: všechno s definovaným `DISTANT_HORIZONS`; programy `dh_*` se tak kontrolují vždy.
 - `scripts/pixel.py soubor.png x,y ...`: hodnoty pixelů bez závislostí.
 - `scripts/take_from_vitrail.py`: převzetí skupiny a z Vitrailu do `src/main/java/dev/vitrail`. **Pozor:** přepsal by
   úpravy v `PackProgram`, `ShaderProperties` a `TargetPlan` (značené `VitrailVK:`), znovu je pak dopiš ručně.
@@ -110,6 +117,38 @@ dokud se pack nevybere ve hře.
   menší škoda než vypnutý pack). Sdílená bariéra je `ALL_COMMANDS`: jednoduché a správné, ne nejrychlejší.
 - **Paměť a deskriptory** (`FrameArena`, `allocateSet`): rostou po stránkách místo selhání, recyklují se po čekání
   na fence daného slotu, ne dvakrát za snímek (mod může kreslit level víckrát).
+
+## Mody
+
+**Flywheel, Create.** VMR 0618965 obsahuje `compat/sable/flywheel`, ale `VulkanFlywheelEngine.render` nic nekreslí (jen
+zapisuje instance do paměti) a backend je za `vulkanmod.compat.sable.flywheel.experimental`. Výchozí backendy Flywheelu
+chtějí `GL 3.3`, VMR hlásí emulovanou `3.2` (`GlFunctionRegistry.REPORTED_GL_VERSION`), takže `GlCompat.SUPPORTS_*` je
+false a Flywheel sám spadne na `flywheel:off`; Create pak kreslí přes vanilla BER a entity (`SuperByteBuffer` do
+`MultiBufferSource`). To je záchranná varianta a nepotřebuje žádný mixin. Render type bloků (`rendertype_solid`, ...) pod
+entitou nebo BER je podle Iris `MOVING_BLOCK`, tedy `gbuffers_block`, ve stínu `shadow_cutout`/`shadow_water`, BER
+ve stínu `shadow_block`. **Vlastní backend** (Colorwheel) nedělám: Flywheel generuje shadery z GLSL materiálů modů (přes
+1000 řádků na program), Colorwheel chce od packu další programy a stojí na `glsl-transformer` (AGPL). Cena záchrany je
+CPU u velkých scén, ne chybějící obraz. Ověřit v logu `flywheel:off`.
+
+**Ostatní mody.** Všechno, co jde přes `RenderType` a `BufferUploader`, se mapuje podle jména shaderu (`Families`) bez
+namespace, neznámý shader jako entita nebo BER podle míchání. Přímé GL se hledá v bajtkódu, `scripts/glscan.py <jar>`
+(i vnořené jary). Mekanism 10.7.19: žádné GL, `GlStateManager` jen v `MekanismRenderType`, `GuiGraph`, `GuiInsetElement`
+(stav, ne kreslení), vlastní shadery `rendertype_flame`, `rendertype_mekasuit`, `rendertype_sps` dostaly programy jako
+v Iris (`ShaderAccess`). Create 6.0.10: GL jen ve Flywheelu (backend, vypnutý) a v jedné třídě Ponderu. **Shim Iris API
+nepřidávám:** Create, Mekanism ani DH bez mod id `iris` nic z Iris API nevolají, Flywheel a DH ho hledají přes `ModList`.
+DH dostává svůj vlastní accessor (`IIrisAccessor`), ostatní mody nic. Co mod nakreslí přímým GL mimo tuhle cestu, skončí
+v targetu VMR, který `final` přepíše: chybí v obraze, nespadne.
+
+**Distant Horizons.** DH 3.3.3 má render za `AbstractDhRenderApiDefinition` (`IDhTerrainRenderer`, `IVertexBufferWrapper`
+a další). `DhDependencySetupMixin` mu místo OpenGL dá `VkDhDefinition`: buffery jsou `VertexBuffer` VMR (GPU, VMA), teren
+kreslí `PackRenderer.distantHalf` programy `dh_terrain`, `dh_water`, `dh_shadow`, ostatní průchody (fog, SSAO, fade, TAA,
+aplikace do MC) jsou prázdné, protože to má na starosti pack. `DhMainMixin` přidá `IIrisAccessor`, díky kterému DH
+odkládá vodu, sestaví seznam pro stín bez frustum kamery a bez packu kreslí jinak; id `iris` se nikde neobjeví. Hloubka:
+vlastní `dhDepthTex0` a kopie `dhDepthTex1` před vodou, forward jako všechno ostatní, řádek projekce z rovin DH.
+Vrchol 16 B (`DistantVertex`), corner sekce přes dynamický offset jednoho UBO, jedna sada na půlku, jeden indexový buffer.
+`DISTANT_HORIZONS` se definuje jen s aktivním bridgem. Bez forku a bez závislosti při běhu: `libs/` je jen `compileOnly`,
+mixiny aplikuje `VitrailVkMixinPlugin` jen pro přesnou verzi 3.3.3 a bez `-Dvitrailvk.dh=false`. Bez packu se LOD
+nekreslí (`dh_` program není), mraky a majáky DH (`dh_generic`) také ne.
 
 ## Práce Codexu (větev `codex-work`, revize `39fd05e`)
 
@@ -203,11 +242,8 @@ Při ověření opraveno: stíny entit řadí podle typu (méně dávek), berou 
 
 ## Co zbývá
 
-1. **Flywheel, Create, Colorwheel.** VMR 0618965 má `compat/sable/flywheel` (`VulkanFlywheelBackend`,
-   `VulkanFlywheelBootstrap`), experimentální za vlastností `vulkanmod.compat.sable.flywheel.experimental`. To dokládá
-   cestu, ne napojení na pack. Zdroje těch tří modů v `refs/` nejsou. Záchrana: Flywheel vypnout, Create přes vanilla BER.
-2. **Ostatní mody.** Mapování modovaných vrstev (Mekanism a další) na programy, případně minimální shim Iris API.
-3. **Distant Horizons.** Rozhraní DH, geometrie, matice, hloubka, `dh_terrain`, `dh_water`, `dh_shadow`, bez forku.
+1. Ověření za běhu, viz „Neověřeno za běhu“ a tabulka výsledků.
+2. Případně: LOD bez packu, `dh_generic`, vlastní backend Flywheelu.
 
 ## Reference: Iris-Vulkan-Port
 

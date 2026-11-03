@@ -17,7 +17,13 @@ import java.util.List;
 public final class Families {
 
 	/** What the level is drawing, set by the mixins around each part of it. */
-	public enum Phase { LEVEL, SKY, BLOCK_ENTITIES, HAND, PARTICLES, WEATHER, CLOUDS, SHADOW }
+	public enum Phase {
+		LEVEL, SKY, BLOCK_ENTITIES, HAND, PARTICLES, WEATHER, CLOUDS, SHADOW, SHADOW_BLOCK_ENTITIES;
+
+		boolean light() {
+			return this == SHADOW || this == SHADOW_BLOCK_ENTITIES;
+		}
+	}
 
 	/**
 	 * @param program the bare program name the pack is asked for
@@ -55,7 +61,7 @@ public final class Families {
 			case PARTICLES -> RenderStage.PARTICLES;
 			case WEATHER -> RenderStage.RAIN_SNOW;
 			case CLOUDS -> RenderStage.CLOUDS;
-			case SHADOW -> RenderStage.NONE;
+			case SHADOW, SHADOW_BLOCK_ENTITIES -> RenderStage.NONE;
 			case LEVEL -> {
 				if (shader.startsWith("rendertype_lines")) yield RenderStage.OUTLINE;
 				if (shader.equals("rendertype_crumbling")) yield RenderStage.DESTROY;
@@ -72,8 +78,8 @@ public final class Families {
 		// The glow's silhouette belongs in the game's outline target, which it composes after the final
 		// pass: VulkanMod draws it there, as it does without a pack.
 		if (shader.equals("rendertype_outline")) return null;
-		if (phase == Phase.SHADOW) {
-			return shadow(shader, names);
+		if (phase.light()) {
+			return shadow(shader, names, phase == Phase.SHADOW_BLOCK_ENTITIES);
 		}
 
 		if (shader.startsWith("rendertype_lines")) {
@@ -85,13 +91,12 @@ public final class Families {
 		if (shader.equals("rendertype_crumbling")) {
 			return new Piece("gbuffers_damagedblock", AlphaTest.ONE_TENTH, VertexInputs.CRUMBLING, VertexInputs.CRUMBLING.elements());
 		}
-		if (shader.startsWith("rendertype_text")) {
-			String program = switch (phase) {
-				case HAND -> "gbuffers_hand";
-				case BLOCK_ENTITIES -> "gbuffers_block_translucent";
-				default -> "gbuffers_entities_translucent";
+		if (shader.startsWith("rendertype_text") || shader.equals("position_color_tex_lightmap")) {
+			return switch (phase) {
+				case HAND -> new Piece("gbuffers_hand", AlphaTest.NON_ZERO, VertexInputs.GLYPH, names);
+				case BLOCK_ENTITIES -> new Piece("gbuffers_block_translucent", AlphaTest.ONE_TENTH, VertexInputs.GLYPH, names);
+				default -> new Piece("gbuffers_entities_translucent", AlphaTest.ONE_TENTH, VertexInputs.GLYPH, names);
 			};
-			return new Piece(program, AlphaTest.NON_ZERO, VertexInputs.GLYPH, names);
 		}
 		if (phase == Phase.HAND) {
 			return mesh(HandPass.opaque() ? "gbuffers_hand" : "gbuffers_hand_water", AlphaTest.ONE_TENTH);
@@ -118,8 +123,23 @@ public final class Families {
 			case "rendertype_leash" -> mesh("gbuffers_basic", AlphaTest.OFF);
 			case "rendertype_lightning" -> mesh("gbuffers_lightning", AlphaTest.OFF);
 			case "rendertype_beacon_beam" -> mesh("gbuffers_beaconbeam", AlphaTest.OFF);
+			// Mekanism's own shaders, by name whichever namespace they are in. What Iris gives them
+			// (pathways/LightningHandler, pipeline/programs/ShaderAccess): its flame, its fusion reactor, its suit.
+			case "rendertype_flame" -> mesh("gbuffers_spidereyes", AlphaTest.ONE_TENTH);
+			case "rendertype_sps" -> mesh("gbuffers_spidereyes", AlphaTest.OFF);
+			case "rendertype_mekasuit" -> mesh("gbuffers_entities_translucent", AlphaTest.ONE_TENTH);
+			// What a chunk layer's shader draws here is a block on the move: a piston, a falling block, a mod's
+			// model through a block render type. Under Iris that is MOVING_BLOCK, whoever owns it.
+			case "rendertype_solid", "rendertype_cutout", "rendertype_cutout_mipped", "rendertype_translucent",
+					"rendertype_translucent_moving_block", "rendertype_tripwire" -> mesh("gbuffers_block", AlphaTest.ONE_TENTH);
 			case "rendertype_entity_alpha" -> mesh("gbuffers_entities", AlphaTest.ONE_TENTH);
-			case "rendertype_eyes" -> mesh("gbuffers_spidereyes", AlphaTest.NON_ZERO);
+			case "rendertype_eyes" -> phase == Phase.BLOCK_ENTITIES ? mesh("gbuffers_block", AlphaTest.ONE_TENTH)
+					: mesh("gbuffers_spidereyes", AlphaTest.NON_ZERO);
+			// Blended, and all the same in the opaque program.
+			case "rendertype_energy_swirl", "rendertype_entity_shadow" ->
+					mesh(phase == Phase.BLOCK_ENTITIES ? "gbuffers_block" : "gbuffers_entities", AlphaTest.ONE_TENTH);
+			case "rendertype_water_mask" -> phase == Phase.BLOCK_ENTITIES ? mesh("gbuffers_block", AlphaTest.ONE_TENTH)
+					: mesh("gbuffers_entities", AlphaTest.OFF);
 			case "rendertype_entity_translucent_emissive" ->
 					mesh(phase == Phase.BLOCK_ENTITIES ? "gbuffers_block" : "gbuffers_spidereyes", AlphaTest.ONE_TENTH);
 			default -> world(shader, phase, blending);
@@ -133,10 +153,11 @@ public final class Families {
 			case BLOCK_ENTITIES -> translucent ? "gbuffers_block_translucent" : "gbuffers_block";
 			default -> translucent ? "gbuffers_entities_translucent" : "gbuffers_entities";
 		};
-		return mesh(program, shader.contains("solid") && !blending ? AlphaTest.OFF : AlphaTest.ONE_TENTH);
+		boolean solid = phase != Phase.BLOCK_ENTITIES && shader.contains("solid") && !blending;
+		return mesh(program, solid ? AlphaTest.OFF : AlphaTest.ONE_TENTH);
 	}
 
-	private static Piece shadow(String shader, List<String> names) {
+	private static Piece shadow(String shader, List<String> names, boolean blockEntity) {
 		if (shader.contains("glint")) {
 			return null; // Iris draws no glint into the map.
 		}
@@ -144,10 +165,21 @@ public final class Families {
 		if (shader.equals("particle") || shader.startsWith("rendertype_lines") || shader.equals("rendertype_beacon_beam")) {
 			return null;
 		}
-		if (shader.startsWith("rendertype_text")) {
+		if (shader.startsWith("rendertype_text") || shader.equals("position_color_tex_lightmap")) {
 			return new Piece("shadow_entities", AlphaTest.NON_ZERO, VertexInputs.GLYPH, names);
 		}
-		return mesh("shadow_entities", shader.contains("solid") ? AlphaTest.OFF : AlphaTest.ONE_TENTH);
+		return switch (shader) {
+			case "rendertype_solid", "rendertype_cutout", "rendertype_cutout_mipped" -> mesh("shadow_cutout", AlphaTest.ONE_TENTH);
+			case "rendertype_translucent", "rendertype_translucent_moving_block", "rendertype_tripwire" ->
+					mesh("shadow_water", AlphaTest.ONE_TENTH);
+			case "rendertype_lightning" -> mesh("shadow_lightning", AlphaTest.OFF);
+			case "rendertype_leash", "position" -> mesh("shadow", AlphaTest.OFF);
+			case "position_color", "position_tex" -> mesh("shadow", AlphaTest.NON_ZERO);
+			case "position_tex_color", "rendertype_clouds" -> mesh("shadow", AlphaTest.ONE_TENTH);
+			case "rendertype_energy_swirl", "rendertype_entity_shadow", "rendertype_water_mask", "rendertype_eyes" ->
+					mesh("shadow_entities", AlphaTest.ONE_TENTH);
+			default -> mesh(blockEntity ? "shadow_block" : "shadow_entities", AlphaTest.ONE_TENTH);
+		};
 	}
 
 	/** The entity prologue declares everything a vanilla format can carry; what this one has not got is a constant. */
