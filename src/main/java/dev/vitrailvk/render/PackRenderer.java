@@ -1,10 +1,14 @@
 package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.MeshData;
 import dev.vitrail.glsl.PackProgram;
+import dev.vitrail.glsl.LegacyGlsl;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.model.BlendMode;
 import dev.vitrail.pack.model.ProgramStage;
+import dev.vitrail.pack.model.TargetName;
+import dev.vitrail.pack.source.ShaderProperties;
 import dev.vitrail.pack.program.ChainFilter;
 import dev.vitrail.pack.program.TerrainPass;
 import dev.vitrail.pack.source.OpenedPack;
@@ -36,6 +40,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.vulkanmod.Initializer;
 import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.render.chunk.ChunkArea;
@@ -46,6 +53,8 @@ import net.vulkanmod.render.chunk.buffer.DrawBuffers;
 import net.vulkanmod.render.chunk.util.StaticQueue;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.joml.FrustumIntersection;
@@ -115,6 +124,13 @@ public final class PackRenderer implements AutoCloseable {
 	private static PackRenderer active;
 	private static String activeKey;
 	private static String failedKey;
+	private static boolean failedDuringFrame;
+	private static boolean drawingLevel;
+	private static boolean solidHandIssued;
+	private static boolean handsHandled;
+	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
+	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
+	private static long frameSerial;
 	private static SpirvCompiler compiler;
 
 	private final String packName;
@@ -124,6 +140,13 @@ public final class PackRenderer implements AutoCloseable {
 	private final PackProgram.Terrain terrain;
 	private final Map<String, PackPipeline> pipelines = new LinkedHashMap<>();
 	private final Map<String, UniformBlock> blocks = new HashMap<>();
+	private final Map<String, PackProgram.Loaded> shadowComposites = new LinkedHashMap<>();
+	private final Map<String, PackPipeline> shadowCompositePipelines = new LinkedHashMap<>();
+	private final Map<String, UniformBlock> shadowCompositeBlocks = new HashMap<>();
+	private final Map<String, Map<Integer, Boolean>> shadowFlips = new HashMap<>();
+	private final Map<String, String> viewportScales = new HashMap<>();
+	private TextureImages textureImages;
+	private PackStorage storage;
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
 	private final Map<TerrainPass, UniformBlock> terrainBlocks = new EnumMap<>(TerrainPass.class);
 	private final RenderPasses renderPasses = new RenderPasses();
@@ -131,6 +154,9 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<Integer, HostBuffer> uniformBuffers = new HashMap<>();
 	private final Set<String> warned = new HashSet<>();
 	private final HostBuffer quad;
+	private final FrameArena meshArena = new FrameArena();
+	private MeshPrograms meshPrograms;
+	private long meshArenaSerial = -1;
 	private final Std140Writer std140 = new Std140Writer();
 	private final VulkanImage noise;
 	private final VulkanImage flatNormal;
@@ -159,17 +185,36 @@ public final class PackRenderer implements AutoCloseable {
 		try {
 			this.packName = this.opened.source().packName();
 			this.values = PackValues.read(this.opened, dimension);
+			this.viewportScales.putAll(this.opened.properties().viewportScales(this.opened.settings().globalDefines(this.opened.options())));
 			this.values.convention(ClipSpace.FORWARD);
-			ChainPlan.Families families = new ChainPlan.Families(terrainMesh, false, false, false);
+			// TODO-VERIFY: verify entity and particle coverage, including fallback draws, in a live frame.
+			ChainPlan.Families families = new ChainPlan.Families(terrainMesh, true, true, false);
 			this.chain = PackProgram.loadChain(this.opened, dimension, ChainFilter.ALL, families);
 			this.terrain = terrainMesh
 					? PackProgram.loadTerrain(this.opened, this.chain.place(), VertexInputs.TERRAIN)
 					: null;
 			if (compiler == null) compiler = new SpirvCompiler();
+			this.meshPrograms = new MeshPrograms(this.opened, this.chain, this.values, compiler);
 			for (Map.Entry<String, PackProgram.Loaded> entry : this.chain.programs().entrySet()) {
 				this.pipelines.put(entry.getKey(), new PackPipeline(entry.getKey(), entry.getValue().program(), compiler,
 						PackPipeline.Kind.QUAD, null));
 				this.blocks.put(entry.getKey(), block(entry.getKey(), entry.getValue(), this.values.catalog()));
+			}
+			// TODO-VERIFY: confirm shadowcomp toggles, fallback and descriptor availability with real packs.
+			this.shadowComposites.putAll(PackProgram.loadShadowComposites(this.opened, this.chain.place()));
+			for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+				String name = entry.getKey();
+				this.shadowCompositePipelines.put(name, new PackPipeline(name, entry.getValue().program(), compiler,
+						PackPipeline.Kind.QUAD, null));
+				this.shadowCompositeBlocks.put(name, block(name, entry.getValue(), this.values.catalog()));
+			}
+			for (ShaderProperties.FlipDirective flip : this.opened.properties().flips(this.opened.settings().globalDefines(this.opened.options()))) {
+				if (!flip.program().startsWith("shadowcomp")) continue;
+				TargetName.index(flip.buffer()).ifPresent(index -> {
+					if (index < this.chain.targets().shadowCeiling()) {
+						this.shadowFlips.computeIfAbsent(flip.program(), unused -> new HashMap<>()).put(index, flip.value());
+					}
+				});
 			}
 			if (this.terrain != null) {
 				for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
@@ -195,8 +240,18 @@ public final class PackRenderer implements AutoCloseable {
 			// What Iris binds when the resource pack ships no normal or specular map: a flat normal, nothing.
 			this.flatNormal = uploaded(1, 1, new byte[] {(byte) 127, (byte) 127, (byte) 255, (byte) 255}, true);
 			this.noSpecular = uploaded(1, 1, new byte[] {0, 0, 0, 0}, true);
+			this.textureImages = new TextureImages(this.opened);
+			this.storage = new PackStorage(this.opened);
+			Set<Integer> shadowMipmapped = new HashSet<>();
+			for (String name : this.shadowComposites.keySet()) shadowMipmapped.addAll(shadowMips(name));
 			this.shadow = new ShadowMaps(this.values.shadowResolution(), shadowNamed(), this.values.shadowColours(),
-					this.values.shadowDepths());
+					this.values.shadowDepths(), shadowMipmapped);
+			for (PackProgram.Loaded loaded : this.shadowComposites.values()) {
+				for (int index : shadowWrites(loaded)) this.shadow.alternateColour(index);
+			}
+			for (Map<Integer, Boolean> flips : this.shadowFlips.values()) {
+				for (int index : flips.keySet()) { this.shadow.colour(index); this.shadow.alternateColour(index); }
+			}
 			logPlan(System.nanoTime() - start);
 			built = true;
 		} finally {
@@ -205,6 +260,10 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private void closePartly() {
+		if (this.storage != null) this.storage.close();
+		if (this.textureImages != null) this.textureImages.close();
+		if (this.meshPrograms != null) this.meshPrograms.close();
+		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.terrainPipelines.values().forEach(PackPipeline::close);
 		closeOpened();
@@ -238,6 +297,13 @@ public final class PackRenderer implements AutoCloseable {
 	/** Every shadow colour the pack samples or a shadow program writes. */
 	private Set<Integer> shadowNamed() {
 		Set<Integer> named = new HashSet<>(this.chain.targets().shadowAllocated());
+		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+			named.addAll(shadowWrites(entry.getValue()));
+			named.addAll(shadowMips(entry.getKey()));
+			for (SamplerPlan.Binding binding : entry.getValue().samplers().bindings()) {
+				if (binding.kind() == SamplerPlan.Kind.SHADOW_COLOUR) named.add(binding.index());
+			}
+		}
 		if (this.terrain != null) {
 			for (Map.Entry<TerrainPass, PackProgram.Loaded> entry : this.terrain.programs().entrySet()) {
 				if (entry.getKey().shadow()) named.addAll(shadowWrites(entry.getValue()));
@@ -264,8 +330,46 @@ public final class PackRenderer implements AutoCloseable {
 	// ----------------------------------------------------------------------------------------------
 	// Hooks
 
+	public static void pushEntity(Entity entity) {
+		drawIds.push(active == null ? DrawIds.NONE : DrawIds.entity(entity));
+	}
+
+	public static void pushBlockEntity(BlockEntity entity) {
+		drawIds.push(active == null ? DrawIds.NONE : DrawIds.blockEntity(entity.getBlockState()));
+	}
+
+	public static void pushItem(ItemStack item) {
+		drawIds.push(active == null ? DrawIds.NONE : currentDrawIds().withItem(item));
+	}
+	public static void popDrawIds() {
+		drawIds.pop();
+	}
+
+	public static boolean capturesDrawIds() {
+		return active != null && active.frameOpen && !failedDuringFrame;
+	}
+
+	public static DrawIds currentDrawIds() {
+		return drawIds.isEmpty() ? DrawIds.NONE : drawIds.peek();
+	}
+	public static void pushPhase(Families.Phase phase) {
+		phases.push(phase);
+	}
+
+	public static void popPhase() {
+		phases.pop();
+	}
+
+	static Families.Phase phase() {
+		return phases.isEmpty() ? Families.Phase.LEVEL : phases.peek();
+	}
+
 	/** {@code LevelRenderer.renderLevel} HEAD, on the render thread. */
 	public static void beginLevel(Matrix4fc modelView, Matrix4fc projection) {
+		if (failedDuringFrame) return;
+		drawingLevel = true;
+		solidHandIssued = false;
+		handsHandled = false;
 		LevelCapture.capture(modelView, projection);
 		ensureLoaded();
 		if (active != null) {
@@ -275,10 +379,10 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	/** Just before {@code LevelRenderer.renderSky}: what the frame needs ahead of the world. */
-	public static void beforeSky(double camX, double camY, double camZ) {
-		if (active == null) return;
+	public static void beforeSky(net.minecraft.client.Camera camera, float tick) {
+		if (active == null || failedDuringFrame) return;
 		try {
-			active.openAndShadow(camX, camY, camZ);
+			active.openAndShadow(camera, tick);
 		} catch (RuntimeException e) {
 			fail(e);
 		}
@@ -289,7 +393,7 @@ public final class PackRenderer implements AutoCloseable {
 	 * layer, in which case VulkanMod's own draw is skipped.
 	 */
 	public static boolean drawTerrain(RenderType renderType, double camX, double camY, double camZ) {
-		if (active == null || active.terrain == null) return false;
+		if (active == null || failedDuringFrame || active.terrain == null) return false;
 		try {
 			return active.terrainLayer(renderType, camX, camY, camZ);
 		} catch (RuntimeException e) {
@@ -298,9 +402,127 @@ public final class PackRenderer implements AutoCloseable {
 		}
 	}
 
+	/** Tries a phase-scoped immediate draw, leaving ownership with the caller on failure. */
+	// TODO-VERIFY: check mixin ordering and the immediate draw path with VulkanMod at runtime.
+	public static boolean drawImmediate(MeshData mesh) {
+		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
+		Families.Phase current = phase();
+		DrawIds[] ids = ((MeshIds) (Object) mesh).vitrailvk$ids();
+		if (current == Families.Phase.SHADOW) {
+			var shadowShader = RenderSystem.getShader();
+			if (shadowShader == null) return true;
+			try {
+				active.shadowMesh(mesh, ids, shadowShader.getName());
+			} catch (RuntimeException e) {
+				fail(e);
+			}
+			return true;
+		}
+		boolean mixed = false;
+		if (current == Families.Phase.LEVEL && drawingLevel) {
+			DrawIds.Kind kind = homogeneousKind(ids, mesh.drawState().vertexCount());
+			if (kind == DrawIds.Kind.BLOCK_ENTITY) current = Families.Phase.BLOCK_ENTITIES;
+			else if (kind != DrawIds.Kind.ENTITY) mixed = true;
+		} else if (current != Families.Phase.SKY && current != Families.Phase.PARTICLES
+				&& current != Families.Phase.WEATHER && current != Families.Phase.CLOUDS && current != Families.Phase.HAND) return false;
+		var shader = RenderSystem.getShader();
+		if (shader == null) return false;
+		try {
+			if (mixed) return active.mixedMesh(mesh, ids, shader.getName());
+			return active.meshLayer(mesh.drawState(), mesh.vertexBuffer(), mesh.indexBuffer(), shader.getName(),
+					ids, current, RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
+		} catch (RuntimeException e) {
+			fail(e);
+			return false;
+		}
+	}
+	/** Returns the one category when every vertex belongs to it; mixed batches are split below. */
+	private static DrawIds.Kind homogeneousKind(DrawIds[] ids, int count) {
+		if (ids == null || ids.length != count || count == 0) return DrawIds.Kind.NONE;
+		DrawIds.Kind kind = ids[0].kind();
+		if (kind == DrawIds.Kind.NONE) return kind;
+		for (int i = 1; i < count; i++) if (ids[i].kind() != kind) return DrawIds.Kind.NONE;
+		return kind;
+	}
+	// TODO-VERIFY: check sorted mixed batches and render-order preservation with real modded geometry.
+	private boolean mixedMesh(MeshData mesh, DrawIds[] ids, String shader) {
+		List<MixedMesh.Run> runs = MixedMesh.split(mesh, ids);
+		if (!this.frameOpen || this.targets == null || runs.isEmpty() || PipelineState.blendInfo.enabled
+				&& (PipelineState.blendInfo.blendOpRgb != VK_BLEND_OP_ADD || PipelineState.blendInfo.blendOpAlpha != VK_BLEND_OP_ADD)
+				|| VRenderSystem.stencilTest || VRenderSystem.logicOp) return false;
+		MeshData.DrawState original = mesh.drawState();
+		// Resolve every run first, so an unsupported family leaves the whole mesh to the game.
+		for (MixedMesh.Run run : runs) {
+			Families.Phase phase = run.kind() == DrawIds.Kind.BLOCK_ENTITY ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL;
+			Families.Piece piece = Families.resolve(shader, original.format(), phase, PipelineState.blendInfo.enabled);
+			if (piece == null) return false;
+			Optional<MeshPrograms.Program> program = this.meshPrograms.resolve(piece, original.format(), this.deferredDone);
+			if (program.isEmpty() || program.get().pass().attachments().isEmpty()) return false;
+			for (ChainPlan.Attachment attachment : program.get().pass().attachments()) {
+				if (this.targets.target(attachment.target()) == null) return false;
+			}
+		}
+		for (MixedMesh.Run run : runs) {
+			Families.Phase phase = run.kind() == DrawIds.Kind.BLOCK_ENTITY ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL;
+			MeshData.DrawState state = new MeshData.DrawState(original.format(), original.vertexCount(), run.count(),
+					original.mode(), com.mojang.blaze3d.vertex.VertexFormat.IndexType.INT);
+			if (!meshLayer(state, mesh.vertexBuffer(), run.indices(), shader, ids, phase,
+					RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix())) {
+				throw new IllegalStateException("A preflighted mixed mesh run could not be drawn");
+			}
+		}
+		return true;
+	}
+	/** Draws a captured static vertex buffer while the sky or cloud renderer owns the call. */
+	// TODO-VERIFY: check static VBO draw matrices and upload lifetime in a running VulkanMod frame.
+	public static boolean drawStaticMesh(MeshData.DrawState state, ByteBuffer vertices, ByteBuffer indices,
+			String shader, Matrix4fc view, Matrix4fc projection) {
+		if (active == null || failedDuringFrame || !Renderer.isRecording()) return false;
+		if (phase() != Families.Phase.SKY && phase() != Families.Phase.CLOUDS) return false;
+		try {
+			return active.meshLayer(state, vertices, indices, shader, null, phase(), view, projection);
+		} catch (RuntimeException e) {
+			fail(e);
+			return false;
+		}
+	}
+	/** Called at the start of vanilla's translucent stage. */
+	// TODO-VERIFY: verify both NeoForge transparency branches and hand ordering at runtime.
+	public static void renderSolidHand(net.minecraft.client.Camera camera, net.minecraft.client.renderer.GameRenderer game, float tick) {
+		if (active == null || failedDuringFrame || !active.frameOpen || solidHandIssued) return;
+		try {
+			HandPass.render(camera, game, tick, true);
+			solidHandIssued = true;
+		} catch (RuntimeException e) {
+			fail(e);
+		}
+	}
+
+	/** Called at level return, after the translucent world and before the pack final. */
+	// TODO-VERIFY: validate depth copy, deferred ordering and vanilla hand suppression in a live frame.
+	public static void renderTranslucentHand(net.minecraft.client.Camera camera, net.minecraft.client.renderer.GameRenderer game, float tick) {
+		if (active == null || failedDuringFrame || !solidHandIssued) return;
+		try {
+			Renderer renderer = Renderer.getInstance();
+			VkCommandBuffer cmd = Renderer.getCommandBuffer();
+			try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+				renderer.endRenderPass(cmd);
+				active.deferred(cmd, stack);
+			}
+			HandPass.render(camera, game, tick, false);
+			handsHandled = !failedDuringFrame;
+		} catch (RuntimeException e) {
+			fail(e);
+		}
+	}
+
+	public static boolean handsHandled() {
+		return handsHandled && active != null && !failedDuringFrame;
+	}
 	/** After {@code GameRenderer.renderLevel}, before the GUI. */
 	public static void afterLevel() {
-		if (active == null) return;
+		drawingLevel = false;
+		if (active == null || failedDuringFrame) return;
 		try {
 			active.finishFrame();
 		} catch (RuntimeException e) {
@@ -317,7 +539,17 @@ public final class PackRenderer implements AutoCloseable {
 	private static void fail(RuntimeException e) {
 		VitrailVk.LOGGER.error("Shader pack {} failed while drawing; turning it off", active.packName, e);
 		failedKey = activeKey;
-		shutDown();
+		// Recorded commands still reference this pack until VulkanMod submits the frame.
+		failedDuringFrame = true;
+	}
+
+	/** Called after VulkanMod finishes or discards the recorded frame. */
+	public static void frameEnded() {
+		frameSerial++;
+		if (failedDuringFrame) {
+			shutDown();
+			failedDuringFrame = false;
+		}
 	}
 
 	private static void ensureLoaded() {
@@ -377,6 +609,7 @@ public final class PackRenderer implements AutoCloseable {
 			this.renderPasses.forgetFramebuffers();
 			freeTargets();
 			this.targets = new PackTargets(this.chain.targets(), screen.width, screen.height);
+			this.storage.resize(cmd, screen.width, screen.height);
 			int usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 					| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 			this.depth = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
@@ -384,6 +617,11 @@ public final class PackRenderer implements AutoCloseable {
 			this.depthNoHand = VulkanImage.createDepthImage(DEPTH_FORMAT, screen.width, screen.height, usage, false, true);
 		}
 		int frame = Renderer.getCurrentFrame();
+		// TODO-VERIFY: confirm frame-slot reuse and multiple level renders against live VulkanMod frames.
+		if (this.meshArenaSerial != frameSerial) {
+			this.meshArena.begin(frame);
+			this.meshArenaSerial = frameSerial;
+		}
 		this.pool = descriptorPool(frame);
 		vkResetDescriptorPool(Vk.device(), this.pool, 0);
 		this.ubo = this.uniformBuffers.computeIfAbsent(frame,
@@ -391,6 +629,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.ubo.rewind();
 
 		clearTargets(cmd, stack);
+		this.storage.beginFrame(cmd, stack);
 		clearShadowMaps(cmd, stack);
 		runPasses(cmd, stack, this.chain.chain().beginEnd());
 	}
@@ -491,6 +730,65 @@ public final class PackRenderer implements AutoCloseable {
 		return true;
 	}
 
+	/** Records a prepared immediate mesh into the pack targets once its program and outputs exist. */
+	// TODO-VERIFY: validate mesh pipeline state, target transitions and draw transforms in a live frame.
+	private boolean meshLayer(MeshData.DrawState state, ByteBuffer vertices, ByteBuffer indices, String shader,
+			DrawIds[] identifiers, Families.Phase drawPhase, Matrix4fc view, Matrix4fc projection) {
+		if (!this.frameOpen || this.targets == null || VRenderSystem.stencilTest || VRenderSystem.logicOp) return false;
+		var blend = PipelineState.blendInfo;
+		if (blend.enabled && (blend.blendOpRgb != VK_BLEND_OP_ADD || blend.blendOpAlpha != VK_BLEND_OP_ADD)) return false;
+		Families.Piece piece = Families.resolve(shader, state.format(), drawPhase, blend.enabled);
+		if (piece == null || drawPhase == Families.Phase.SHADOW) return false;
+		Optional<MeshPrograms.Program> candidate = this.meshPrograms.resolve(piece, state.format(), this.deferredDone);
+		if (candidate.isEmpty()) return false;
+		MeshPrograms.Program program = candidate.get();
+		List<VulkanImage> outputs = new ArrayList<>();
+		for (ChainPlan.Attachment attachment : program.pass().attachments()) {
+			PackTargets.Target target = this.targets.target(attachment.target());
+			if (target == null) return false;
+			outputs.add(target.image(attachment.side()));
+		}
+		if (outputs.isEmpty()) return false;
+		MeshDraw draw = MeshDraw.copy(this.meshArena, state, vertices, indices);
+		if (draw == null) return true;
+		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, identifiers, state, vertices, RenderSystem.getShaderLineWidth());
+		Renderer renderer = Renderer.getInstance();
+		VkCommandBuffer cmd = Renderer.getCommandBuffer();
+		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+			renderer.endRenderPass(cmd);
+			this.values.modelView(view, IDENTITY);
+			this.values.projection(projection);
+			this.values.passAlphaTest(program.loaded().alphaTest().reference());
+			long set = allocateSet(stack, this.pool, program.pipeline().setLayout());
+			writeDescriptors(stack, set, program.pipeline(), program.loaded(), program.uniforms(), outputs,
+					glImage(RenderSystem.getShaderTexture(0)), glImage(RenderSystem.getShaderTexture(2)));
+			for (VulkanImage output : outputs) output.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			this.depth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+			List<Integer> formats = outputs.stream().map(image -> image.format).toList();
+			long renderPass = this.renderPasses.renderPass(formats, DEPTH_FORMAT, true);
+			long[] views = new long[outputs.size() + 1];
+			for (int i = 0; i < outputs.size(); i++) views[i] = attachmentView(outputs.get(i));
+			views[outputs.size()] = this.depth.getImageView();
+			int width = this.depth.width, height = this.depth.height;
+			long framebuffer = this.renderPasses.framebuffer(renderPass, views, width, height);
+			PackPipeline.Blend fallback = blend.enabled
+					? new PackPipeline.Blend(true, blend.srcRgbFactor, blend.dstRgbFactor, blend.srcAlphaFactor, blend.dstAlphaFactor)
+					: PackPipeline.Blend.OFF;
+			String path = program.loaded().path();
+			String served = path.substring(path.lastIndexOf('/') + 1);
+			List<PackPipeline.Blend> blends = blends(piece.program(), served, outputs.size(), fallback);
+			int depthOp = VRenderSystem.depthFun - 512;
+			if (depthOp < VK_COMPARE_OP_NEVER || depthOp > VK_COMPARE_OP_ALWAYS) throw new IllegalStateException("Unknown depth function");
+			PackPipeline.Style style = new PackPipeline.Style(draw.topology(), VRenderSystem.depthTest, VRenderSystem.depthMask,
+					depthOp, VRenderSystem.cull ? VRenderSystem.cullFace : VK_CULL_MODE_NONE, VRenderSystem.colorMask, false, blends);
+			beginPass(cmd, stack, renderPass, framebuffer, width, height, false);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline().pipeline(renderPass, outputs.size(), style));
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline().layout(), 0, stack.longs(set), null);
+			draw.draw(cmd, stack, constants);
+			vkCmdEndRenderPass(cmd);
+		}
+		return true;
+	}
 	/** What the pack's {@code blend.<program>} directives ask for, per attachment. */
 	private List<PackPipeline.Blend> blends(String asked, String served, int attachments, PackPipeline.Blend fallback) {
 		List<PackPipeline.Blend> blends = new ArrayList<>(Math.max(1, attachments));
@@ -578,7 +876,9 @@ public final class PackRenderer implements AutoCloseable {
 	 * cast, the copy without translucents, translucent terrain. The prepare passes read the map of this
 	 * frame, so they run behind it. Iris's order ({@code shadows/ShadowRenderer.java}).
 	 */
-	private void openAndShadow(double camX, double camY, double camZ) {
+	private void openAndShadow(net.minecraft.client.Camera camera, float tick) {
+		var position = camera.getPosition();
+		double camX = position.x, camY = position.y, camZ = position.z;
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
@@ -586,22 +886,69 @@ public final class PackRenderer implements AutoCloseable {
 			openFrame(cmd, stack);
 			if (this.shadowDone) return;
 			this.shadowDone = true;
-			Collection<ShadowArea> areas = shadowWanted() ? shadowSections(camX, camY, camZ) : List.of();
 			ShadowCasters casters = this.values.shadowCasters();
+			Collection<ShadowArea> areas = shadowWanted() || casters.anyBlockEntity() ? shadowSections(camX, camY, camZ) : List.of();
 			if (!areas.isEmpty() && casters.terrain()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_SOLID, RenderType.solid(), TerrainRenderType.SOLID, camX, camY, camZ);
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutoutMipped(), TerrainRenderType.CUTOUT_MIPPED, camX, camY, camZ);
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutout(), TerrainRenderType.CUTOUT, camX, camY, camZ);
 			}
+			if (casters.anyFeature()) {
+				List<RenderSection> sections = areas.stream().flatMap(area -> area.sections().stream()).toList();
+				ShadowFeatures.render(this.values, camera, tick, sections, casters);
+				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
+				renderer.endRenderPass(cmd);
+			}
 			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
 			if (!areas.isEmpty() && casters.translucent()) {
 				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, RenderType.translucent(), TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
 			}
+			// TODO-VERIFY: confirm depth mip generation and shader sampling on live Vulkan devices.
+			if (this.shadow.depth().mipLevels > 1) mipChain(cmd, stack, this.shadow.depth(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
+			if (this.shadow.depthNoTranslucent().mipLevels > 1) mipChain(cmd, stack, this.shadow.depthNoTranslucent(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (!areas.isEmpty()) ShadowAmortisation.drawn();
+			runShadowComposites(cmd, stack);
 			runPasses(cmd, stack, this.chain.chain().prepareEnd());
 		}
 	}
 
+	/** One immediate entity mesh into the light's targets, without touching the main target. */
+	// TODO-VERIFY: check shadow entity inputs, render state and attachment/sampler hazards at runtime.
+	private void shadowMesh(MeshData mesh, DrawIds[] ids, String shader) {
+		Families.Piece piece = Families.resolve(shader, mesh.drawState().format(), Families.Phase.SHADOW,
+				PipelineState.blendInfo.enabled);
+		if (piece == null) return;
+		Optional<MeshPrograms.ShadowProgram> selected = this.meshPrograms.resolveShadow(piece, mesh.drawState().format());
+		if (selected.isEmpty()) return;
+		MeshPrograms.ShadowProgram program = selected.get();
+		// Sampling a shadow attachment while writing the same image is invalid in Vulkan.
+		// TODO-VERIFY: implement a separate read snapshot for shadow programs that sample these targets.
+		for (SamplerPlan.Binding binding : program.loaded().samplers().bindings()) {
+			if (binding.kind() == SamplerPlan.Kind.SHADOW_DEPTH || binding.kind() == SamplerPlan.Kind.SHADOW_COLOUR) return;
+		}
+		MeshDraw draw = MeshDraw.copy(this.meshArena, mesh);
+		if (draw == null) return;
+		FrameArena.Slice constants = MeshDraw.constants(this.meshArena, ids, mesh.drawState(), mesh.vertexBuffer(),
+				RenderSystem.getShaderLineWidth());
+		List<VulkanImage> outputs = new ArrayList<>();
+		for (int index : shadowWrites(program.loaded())) outputs.add(this.shadow.colour(index));
+		Renderer renderer = Renderer.getInstance();
+		VkCommandBuffer cmd = Renderer.getCommandBuffer();
+		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+			renderer.endRenderPass(cmd);
+			this.values.passAlphaTest(program.loaded().alphaTest().reference());
+			long set = allocateSet(stack, this.pool, program.pipeline().setLayout());
+			writeDescriptors(stack, set, program.pipeline(), program.loaded(), program.uniforms(), outputs,
+					glImage(RenderSystem.getShaderTexture(0)), glImage(RenderSystem.getShaderTexture(2)));
+			PackPipeline.Style style = new PackPipeline.Style(draw.topology(), true, true, VK_COMPARE_OP_LESS_OR_EQUAL,
+					VK_CULL_MODE_NONE, 0xF, false, List.of(PackPipeline.Blend.OFF));
+			long pass = beginShadowPass(cmd, stack, outputs);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline().pipeline(pass, outputs.size(), style));
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, program.pipeline().layout(), 0, stack.longs(set), null);
+			draw.draw(cmd, stack, constants);
+			vkCmdEndRenderPass(cmd);
+		}
+	}
 	/** Whether the pack has anything to draw the map with; the map then stays clear, as in Iris. */
 	private boolean shadowWanted() {
 		if (this.terrain == null) return false;
@@ -621,7 +968,7 @@ public final class PackRenderer implements AutoCloseable {
 	 */
 	private Collection<ShadowArea> shadowSections(double camX, double camY, double camZ) {
 		int chunks = Minecraft.getInstance().options.getEffectiveRenderDistance();
-		boolean voxelised = this.terrain.programs().entrySet().stream()
+		boolean voxelised = this.terrain != null && this.terrain.programs().entrySet().stream()
 				.anyMatch(entry -> entry.getKey().shadow() && entry.getValue().voxelises());
 		ShadowCullPlan plan = this.values.shadowCullPlan(chunks, chunks, new Vector3f(), new Matrix4f(), voxelised);
 		float bound = plan.bound();
@@ -695,15 +1042,59 @@ public final class PackRenderer implements AutoCloseable {
 		List<Integer> formats = outputs.stream().map(image -> image.format).toList();
 		long renderPass = this.renderPasses.renderPass(formats, this.shadow.depthFormat(), true);
 		long[] views = new long[outputs.size() + 1];
-		for (int i = 0; i < outputs.size(); i++) views[i] = outputs.get(i).getImageView();
-		views[outputs.size()] = this.shadow.depth().getImageView();
+		for (int i = 0; i < outputs.size(); i++) views[i] = attachmentView(outputs.get(i));
+		views[outputs.size()] = attachmentView(this.shadow.depth());
 		int size = this.shadow.resolution();
 		long framebuffer = this.renderPasses.framebuffer(renderPass, views, size, size);
 		beginPass(cmd, stack, renderPass, framebuffer, size, size, false);
 		return renderPass;
 	}
 
+	private Set<Integer> shadowMips(String name) {
+		return this.chain.targets().directives().mipmapRequests().getOrDefault(name, Set.of());
+	}
+
+	/** Shadow composites have their own flip counter, independent of the main colour chain. */
+	// TODO-VERIFY: validate shadowcomp output parity, descriptor barriers and explicit flips in game.
+	private void runShadowComposites(VkCommandBuffer cmd, MemoryStack stack) {
+		this.shadowFlips.getOrDefault("shadowcomp_pre", Map.of()).forEach((index, flip) -> {
+			if (flip) this.shadow.flip(index);
+		});
+		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+			String name = entry.getKey();
+			PackPipeline pipeline = this.shadowCompositePipelines.get(name);
+			List<Integer> writes = shadowWrites(entry.getValue());
+			for (int index : shadowMips(name)) {
+				VulkanImage image = this.shadow.sampledColour(index);
+				PackDirectives.ShadowColour directive = this.shadow.directive(index);
+				int filter = directive != null && directive.format().used().integer() ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+				if (image.mipLevels > 1) mipChain(cmd, stack, image, VK_IMAGE_ASPECT_COLOR_BIT, filter);
+			}
+			List<VulkanImage> outputs = writes.stream().map(this.shadow::nextColour).toList();
+			long set = allocateSet(stack, this.pool, pipeline.setLayout());
+			writeDescriptors(stack, set, pipeline, entry.getValue(), this.shadowCompositeBlocks.get(name), outputs, null, null);
+			for (VulkanImage output : outputs) output.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			long pass = this.renderPasses.renderPass(outputs.stream().map(image -> image.format).toList(), true);
+			int size = this.shadow.resolution();
+			long framebuffer = this.renderPasses.framebuffer(pass, outputs.stream().mapToLong(PackRenderer::attachmentView).toArray(), size, size);
+			PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false, false,
+					VK_COMPARE_OP_ALWAYS, VK_CULL_MODE_NONE, 0xF, false, List.of(PackPipeline.Blend.OFF));
+			beginPass(cmd, stack, pass, framebuffer, size, size, false);
+			applyViewport(cmd, stack, name, size, size);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(pass, outputs.size(), style));
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
+			vkCmdBindVertexBuffers(cmd, 0, stack.longs(this.quad.handle()), stack.longs(0));
+			vkCmdDraw(cmd, 6, 1, 0, 0);
+			vkCmdEndRenderPass(cmd);
+			Map<Integer, Boolean> flips = this.shadowFlips.getOrDefault(name, Map.of());
+			for (int index : writes) if (flips.get(index) != Boolean.FALSE) this.shadow.flip(index);
+			// Iris applies explicit true flips after the implicit output flips, including duplicates.
+			flips.forEach((index, flip) -> { if (flip) this.shadow.flip(index); });
+		}
+	}
+
 	private void clearShadowMaps(VkCommandBuffer cmd, MemoryStack stack) {
+		this.shadow.resetFlips();
 		clearDepth(cmd, stack, this.shadow.depth());
 		clearDepth(cmd, stack, this.shadow.depthNoTranslucent());
 		VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack)
@@ -721,6 +1112,11 @@ public final class PackRenderer implements AutoCloseable {
 			VulkanImage image = entry.getValue();
 			image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 			vkCmdClearColorImage(cmd, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, value, range);
+			VulkanImage alternate = this.shadow.alternateColours().get(entry.getKey());
+			if (alternate != null) {
+				alternate.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+				vkCmdClearColorImage(cmd, alternate.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, value, range);
+			}
 		}
 	}
 
@@ -833,11 +1229,15 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private static void mipChain(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image) {
+		mipChain(cmd, stack, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_FILTER_LINEAR);
+	}
+
+	private static void mipChain(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image, int aspect, int filter) {
 		image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
 				.srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
 				.image(image.getId());
-		barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+		barrier.subresourceRange().aspectMask(aspect).levelCount(1).layerCount(1);
 		int width = image.width;
 		int height = image.height;
 		for (int level = 1; level < image.mipLevels; level++) {
@@ -848,12 +1248,12 @@ public final class PackRenderer implements AutoCloseable {
 					.srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT).dstAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT);
 			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
 			VkImageBlit.Buffer region = VkImageBlit.calloc(1, stack);
-			region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1).layerCount(1);
-			region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level).layerCount(1);
+			region.srcSubresource().aspectMask(aspect).mipLevel(level - 1).layerCount(1);
+			region.dstSubresource().aspectMask(aspect).mipLevel(level).layerCount(1);
 			region.srcOffsets(1).set(width, height, 1);
 			region.dstOffsets(1).set(nextWidth, nextHeight, 1);
 			vkCmdBlitImage(cmd, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.getId(),
-					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_LINEAR);
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, filter);
 			barrier.oldLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL).newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
 					.srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT);
 			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
@@ -898,11 +1298,30 @@ public final class PackRenderer implements AutoCloseable {
 		PackPipeline.Style style = new PackPipeline.Style(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false, false,
 				VK_COMPARE_OP_ALWAYS, VK_CULL_MODE_NONE, 0xF, false, blends);
 		beginPass(cmd, stack, renderPass, framebuffer, width, height, toScreen);
+		if (!toScreen) applyViewport(cmd, stack, pass.program(), width, height);
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(renderPass, outputs.size(), style));
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
 		vkCmdBindVertexBuffers(cmd, 0, stack.longs(this.quad.handle()), stack.longs(0));
 		vkCmdDraw(cmd, 6, 1, 0, 0);
 		vkCmdEndRenderPass(cmd);
+	}
+
+	// TODO-VERIFY: confirm scale and offsets on packs that render partial shadow/main targets.
+	private void applyViewport(VkCommandBuffer cmd, MemoryStack stack, String name, int width, int height) {
+		String declared = this.viewportScales.get(name);
+		if (declared == null) return;
+		try {
+			String[] parts = declared.split("\\s+");
+			float scale = Float.parseFloat(parts[0]);
+			float x = parts.length > 1 ? Float.parseFloat(parts[1]) : 0;
+			float y = parts.length > 1 ? Float.parseFloat(parts[2]) : 0;
+			if (!Float.isFinite(scale) || !Float.isFinite(x) || !Float.isFinite(y)
+					|| scale <= 0 || x < 0 || y < 0 || x + scale > 1 || y + scale > 1) throw new IllegalArgumentException();
+			vkCmdSetViewport(cmd, 0, VkViewport.calloc(1, stack).x((int) (width * x)).y((int) (height * y))
+					.width(Math.max(1, (int) (width * scale))).height(Math.max(1, (int) (height * scale))).minDepth(0).maxDepth(1));
+		} catch (IllegalArgumentException | IndexOutOfBoundsException e) {
+			if (this.warned.add("scale:" + name)) VitrailVk.LOGGER.warn("[pack] invalid scale.{}={}", name, declared);
+		}
 	}
 
 	/** The swapchain is shown row 0 first; the pack's targets keep row 0 at the bottom. */
@@ -925,6 +1344,16 @@ public final class PackRenderer implements AutoCloseable {
 			UniformBlock block, List<VulkanImage> outputs, VulkanImage atlas, VulkanImage lightmap) {
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(pipeline.slots.size(), stack);
+		PackStorage.barrier(cmd, stack);
+		Set<VulkanImage> stored = new HashSet<>();
+		for (PackPipeline.Slot slot : pipeline.slots) {
+			if (slot.type() != SpirvModule.STORAGE_IMAGE) continue;
+			VulkanImage image = storageImage(slot.name(), loaded);
+			if (image == null) throw new IllegalStateException("Unbound storage image " + slot.name() + " in " + loaded.path());
+			if (outputs.contains(image)) throw new IllegalStateException("Storage image aliases framebuffer in " + loaded.path());
+			stored.add(image);
+			image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_GENERAL);
+		}
 		int count = 0;
 		for (PackPipeline.Slot slot : pipeline.slots) {
 			VkWriteDescriptorSet write = writes.get(count).sType$Default().dstSet(set).dstBinding(slot.binding())
@@ -932,11 +1361,18 @@ public final class PackRenderer implements AutoCloseable {
 			switch (slot.type()) {
 				case SpirvModule.UNIFORM_BUFFER -> {
 					UniformBlock written = "OfGlobals".equals(slot.name()) ? block : null;
-					int size = written == null ? 256 : Math.max(16, written.size());
+					boolean transforms = LegacyGlsl.GAME_TRANSFORMS.equals(slot.name());
+					int size = written != null ? Math.max(16, written.size()) : transforms ? 160 : 256;
 					long offset = this.ubo.allocate(size);
 					ByteBuffer view = this.ubo.view(offset, size);
 					if (written != null) {
 						written.write(this.std140.into(view), this.values.world());
+					} else if (transforms) {
+						// TODO-VERIFY: confirm the per-draw matrices and color against VulkanMod's live render state.
+						float[] color = RenderSystem.getShaderColor();
+						this.std140.into(view).putMat4(RenderSystem.getModelViewMatrix())
+								.putVec4(color[0], color[1], color[2], color[3]).putVec3(0, 0, 0)
+								.putMat4(RenderSystem.getTextureMatrix());
 					} else {
 						for (int i = 0; i < size; i++) view.put(i, (byte) 0);
 					}
@@ -948,22 +1384,31 @@ public final class PackRenderer implements AutoCloseable {
 					if (slot.depth() && image != this.shadow.depth() && image != this.shadow.depthNoTranslucent()) {
 						image = this.shadow.depth();
 					}
-					image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-					long sampler = slot.depth() ? this.shadow.compare() : image.getSampler();
+					int layout = stored.contains(image) ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+					image.transitionImageLayout(stack, cmd, layout);
+					long sampler = slot.depth() ? this.shadow.compare(image) : image.getSampler();
+					long view = this.storage.image(slot.name()) == image ? this.storage.view(slot.name()) : image.getImageView();
 					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
 					for (int i = 0; i < slot.count(); i++) {
-						info.get(i).imageView(image.getImageView()).sampler(sampler)
-								.imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+						info.get(i).imageView(view).sampler(sampler).imageLayout(layout);
 					}
 					write.pImageInfo(info);
 				}
-				default -> {
-					if (this.warned.add(pipeline.name + ":" + slot.name())) {
-						VitrailVk.LOGGER.warn("[pack] {}: descriptor {} of type {} is not served yet", pipeline.name,
-								slot.name(), slot.type());
-					}
-					continue;
+				case SpirvModule.STORAGE_IMAGE -> {
+					VulkanImage image = storageImage(slot.name(), loaded);
+					long view = this.storage.image(slot.name()) == image ? this.storage.view(slot.name()) : attachmentView(image);
+					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
+					for (int i = 0; i < slot.count(); i++) info.get(i).imageView(view).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
+					write.pImageInfo(info);
 				}
+				case SpirvModule.STORAGE_BUFFER -> {
+					var buffer = this.storage.buffer(slot.name());
+					if (buffer == null) throw new IllegalStateException("Unbound SSBO " + slot.name() + " in " + loaded.path());
+					VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(slot.count(), stack);
+					for (int i = 0; i < slot.count(); i++) info.get(i).buffer(buffer.handle()).offset(0).range(buffer.size());
+					write.pBufferInfo(info);
+				}
+				default -> throw new IllegalStateException("Unsupported descriptor " + slot.name() + " in " + loaded.path());
 			}
 			count++;
 		}
@@ -971,8 +1416,24 @@ public final class PackRenderer implements AutoCloseable {
 		vkUpdateDescriptorSets(Vk.device(), writes, null);
 	}
 
+	private VulkanImage storageImage(String name, PackProgram.Loaded loaded) {
+		VulkanImage image = this.storage.image(name);
+		if (image != null) return image;
+		SamplerPlan.Binding binding = loaded.samplers().binding(name);
+		if (binding != null && binding.kind() == SamplerPlan.Kind.COLOUR_IMAGE) {
+			PackTargets.Target target = this.targets.target(binding.index());
+			return target == null ? null : target.image(binding.side());
+		}
+		return null;
+	}
+
 	private VulkanImage sampled(String sampler, PackProgram.Loaded loaded, List<VulkanImage> outputs,
 			VulkanImage atlas, VulkanImage lightmap) {
+		String program = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
+		VulkanImage custom = this.textureImages.resolve(program, sampler);
+		if (custom != null) return custom;
+		custom = this.storage.image(sampler);
+		if (custom != null) return custom;
 		if (atlas != null && ATLAS.contains(sampler)) return atlas;
 		if (lightmap != null && LIGHTMAP.equals(sampler)) return lightmap;
 		if ("normals".equals(sampler)) return this.flatNormal;
@@ -1004,7 +1465,7 @@ public final class PackRenderer implements AutoCloseable {
 					return loaded.samplers().withoutTranslucents(sampler) ? this.shadow.depthNoTranslucent() : this.shadow.depth();
 				}
 				case SHADOW_COLOUR -> {
-					VulkanImage image = this.shadow.colour(binding.index());
+					VulkanImage image = this.shadow.sampledColour(binding.index());
 					if (!outputs.contains(image)) return image;
 				}
 				default -> { }
@@ -1077,14 +1538,20 @@ public final class PackRenderer implements AutoCloseable {
 
 	@Override
 	public void close() {
+		if (this.storage != null) this.storage.close();
+		if (this.textureImages != null) this.textureImages.close();
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.pipelines.clear();
+		this.shadowCompositePipelines.values().forEach(PackPipeline::close);
+		this.shadowCompositePipelines.clear();
 		this.terrainPipelines.values().forEach(PackPipeline::close);
 		this.terrainPipelines.clear();
 		this.renderPasses.close();
 		this.descriptorPools.values().forEach(pool -> vkDestroyDescriptorPool(Vk.device(), pool, null));
 		this.descriptorPools.clear();
 		this.uniformBuffers.values().forEach(HostBuffer::close);
+		this.meshArena.close();
+		if (this.meshPrograms != null) this.meshPrograms.close();
 		this.uniformBuffers.clear();
 		this.quad.close();
 		this.noise.free();

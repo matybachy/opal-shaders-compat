@@ -148,7 +148,8 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 jar {
-    from('LICENSE') { rename { "${it}_${project.mod_id}" } }
-    from('COPYING') { rename { "${it}_${project.mod_id}" } }
-    from('NOTICE', 'NOTICE-vitrail') { rename { "${it}_${project.mod_id}" } }
+    from(layout.projectDirectory.file('LICENSE')) { rename { "${it}_${project.mod_id}" } }
+    from(layout.projectDirectory.file('COPYING')) { rename { "${it}_${project.mod_id}" } }
+    from(layout.projectDirectory.file('NOTICE')) { rename { "${it}_${project.mod_id}" } }
+    from(layout.projectDirectory.file('NOTICE-vitrail')) { rename { "${it}_${project.mod_id}" } }
 }

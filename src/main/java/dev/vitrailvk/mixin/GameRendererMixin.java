@@ -1,6 +1,16 @@
 package dev.vitrailvk.mixin;
 
 import dev.vitrailvk.render.PackRenderer;
+import dev.vitrailvk.render.Families;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import net.minecraft.client.Camera;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.ItemInHandRenderer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import org.joml.Matrix4f;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -18,4 +28,21 @@ public abstract class GameRendererMixin {
 	private void vitrailvk$afterLevel(DeltaTracker deltaTracker, boolean renderLevel, CallbackInfo ci) {
 		PackRenderer.afterLevel();
 	}
-}
+
+	// TODO-VERIFY: confirm hand draw and deferred ordering during a live frame.
+	@WrapMethod(method = "renderItemInHand")
+	private void vitrailvk$handPhase(Camera camera, float tick, Matrix4f projection, Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.HAND);
+		try {
+			original.call(camera, tick, projection);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}
+	// TODO-VERIFY: suppress only vanilla's duplicate hands, keeping screen effects, when both pack passes ran.
+	@WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
+			target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;Lnet/minecraft/client/player/LocalPlayer;I)V"))
+	private void vitrailvk$skipVanillaHands(ItemInHandRenderer renderer, float tick, PoseStack poses,
+			MultiBufferSource.BufferSource buffers, LocalPlayer player, int light, Operation<Void> original) {
+		if (!PackRenderer.handsHandled()) original.call(renderer, tick, poses, buffers, player, light);
+	}}

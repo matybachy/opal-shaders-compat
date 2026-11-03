@@ -1,0 +1,568 @@
+Revize 39fd05ee56202893e95ebbe0673aaefff85c623e
+Větev codex-work
+
+Soubory po commitech od obnovení projektu. A = přidán, M = upraven. První commit zahrnuje i převzaté zdroje.
+
+commit f79800cb9087d66d73679cafccc59425a579bd25
+Restore project; pack runtime on VulkanMod Reforged with options, noise, mipmaps and blending
+
+A	.gitattributes
+A	.gitignore
+A	ANALYSIS.md
+A	COPYING
+A	LICENSE
+A	NOTICE
+A	NOTICE-vitrail
+A	PORTING.md
+A	build.gradle
+A	gradle.properties
+A	gradle/wrapper/gradle-wrapper.jar
+A	gradle/wrapper/gradle-wrapper.properties
+A	gradlew
+A	gradlew.bat
+A	run/shaderpacks/test_composite/shaders/composite.fsh
+A	run/shaderpacks/test_composite/shaders/composite.vsh
+A	run/shaderpacks/test_composite/shaders/final.fsh
+A	run/shaderpacks/test_composite/shaders/final.vsh
+A	run/shaderpacks/test_final/shaders/final.fsh
+A	run/shaderpacks/test_final/shaders/final.vsh
+A	run/shaderpacks/test_terrain/shaders/block.properties
+A	run/shaderpacks/test_terrain/shaders/composite.fsh
+A	run/shaderpacks/test_terrain/shaders/composite.vsh
+A	run/shaderpacks/test_terrain/shaders/gbuffers_terrain.fsh
+A	run/shaderpacks/test_terrain/shaders/gbuffers_terrain.vsh
+A	run/shaderpacks/test_terrain/shaders/shaders.properties
+A	scripts/autotest.sh
+A	scripts/pixel.py
+A	scripts/take_from_vitrail.py
+A	settings.gradle
+A	src/main/java/dev/vitrail/Vitrail.java
+A	src/main/java/dev/vitrail/cache/package-info.java
+A	src/main/java/dev/vitrail/dh/DhDepth.java
+A	src/main/java/dev/vitrail/glsl/CloudVertex.java
+A	src/main/java/dev/vitrail/glsl/CompilerMacros.java
+A	src/main/java/dev/vitrail/glsl/CrumblingVertex.java
+A	src/main/java/dev/vitrail/glsl/DebugNames.java
+A	src/main/java/dev/vitrail/glsl/DistantVertex.java
+A	src/main/java/dev/vitrail/glsl/Emitter.java
+A	src/main/java/dev/vitrail/glsl/EntityVertex.java
+A	src/main/java/dev/vitrail/glsl/GameTransforms.java
+A	src/main/java/dev/vitrail/glsl/GeometryFold.java
+A	src/main/java/dev/vitrail/glsl/GlintVertex.java
+A	src/main/java/dev/vitrail/glsl/GlslLexer.java
+A	src/main/java/dev/vitrail/glsl/GlslTranslator.java
+A	src/main/java/dev/vitrail/glsl/GlyphVertex.java
+A	src/main/java/dev/vitrail/glsl/LegacyGlsl.java
+A	src/main/java/dev/vitrail/glsl/LinesVertex.java
+A	src/main/java/dev/vitrail/glsl/LoadClock.java
+A	src/main/java/dev/vitrail/glsl/LocalZeroes.java
+A	src/main/java/dev/vitrail/glsl/MovingBlockVertex.java
+A	src/main/java/dev/vitrail/glsl/PackBuiltins.java
+A	src/main/java/dev/vitrail/glsl/PackProgram.java
+A	src/main/java/dev/vitrail/glsl/ParticleVertex.java
+A	src/main/java/dev/vitrail/glsl/ProgramTranslator.java
+A	src/main/java/dev/vitrail/glsl/SharedMemory.java
+A	src/main/java/dev/vitrail/glsl/SkyVertex.java
+A	src/main/java/dev/vitrail/glsl/SodiumVertex.java
+A	src/main/java/dev/vitrail/glsl/TangentFrame.java
+A	src/main/java/dev/vitrail/glsl/TokenStream.java
+A	src/main/java/dev/vitrail/glsl/TranslatedProgramCodec.java
+A	src/main/java/dev/vitrail/glsl/TranslatedUnit.java
+A	src/main/java/dev/vitrail/glsl/TranslationCache.java
+A	src/main/java/dev/vitrail/glsl/VaryingSplit.java
+A	src/main/java/dev/vitrail/glsl/VendorExtensions.java
+A	src/main/java/dev/vitrail/glsl/VertexInputs.java
+A	src/main/java/dev/vitrail/glsl/VertexPrologue.java
+A	src/main/java/dev/vitrail/glsl/VolumeFlattening.java
+A	src/main/java/dev/vitrail/mixin/access/package-info.java
+A	src/main/java/dev/vitrail/mixin/sodium/package-info.java
+A	src/main/java/dev/vitrail/pack/id/BlockIds.java
+A	src/main/java/dev/vitrail/pack/id/NameIds.java
+A	src/main/java/dev/vitrail/pack/load/LoadedPack.java
+A	src/main/java/dev/vitrail/pack/load/PackLoader.java
+A	src/main/java/dev/vitrail/pack/load/PackReport.java
+A	src/main/java/dev/vitrail/pack/load/PackStats.java
+A	src/main/java/dev/vitrail/pack/load/package-info.java
+A	src/main/java/dev/vitrail/pack/menu/MenuOption.java
+A	src/main/java/dev/vitrail/pack/menu/MenuPage.java
+A	src/main/java/dev/vitrail/pack/menu/MenuSlot.java
+A	src/main/java/dev/vitrail/pack/menu/MenuValues.java
+A	src/main/java/dev/vitrail/pack/menu/PackMenu.java
+A	src/main/java/dev/vitrail/pack/model/AlphaTest.java
+A	src/main/java/dev/vitrail/pack/model/BlendMode.java
+A	src/main/java/dev/vitrail/pack/model/BufferObject.java
+A	src/main/java/dev/vitrail/pack/model/ImageInformation.java
+A	src/main/java/dev/vitrail/pack/model/PackTexture.java
+A	src/main/java/dev/vitrail/pack/model/PixelFormat.java
+A	src/main/java/dev/vitrail/pack/model/PixelType.java
+A	src/main/java/dev/vitrail/pack/model/ProgramFallbacks.java
+A	src/main/java/dev/vitrail/pack/model/ProgramNames.java
+A	src/main/java/dev/vitrail/pack/model/ProgramStage.java
+A	src/main/java/dev/vitrail/pack/model/RenderStage.java
+A	src/main/java/dev/vitrail/pack/model/TargetFormat.java
+A	src/main/java/dev/vitrail/pack/model/TargetName.java
+A	src/main/java/dev/vitrail/pack/model/TargetSize.java
+A	src/main/java/dev/vitrail/pack/model/TextureStage.java
+A	src/main/java/dev/vitrail/pack/model/package-info.java
+A	src/main/java/dev/vitrail/pack/option/ConstOptions.java
+A	src/main/java/dev/vitrail/pack/option/EngineDefines.java
+A	src/main/java/dev/vitrail/pack/option/OptionIndex.java
+A	src/main/java/dev/vitrail/pack/option/OptionRewriter.java
+A	src/main/java/dev/vitrail/pack/option/OptionValue.java
+A	src/main/java/dev/vitrail/pack/option/PackOption.java
+A	src/main/java/dev/vitrail/pack/option/SettingSet.java
+A	src/main/java/dev/vitrail/pack/program/ChainFilter.java
+A	src/main/java/dev/vitrail/pack/program/ProgramResolver.java
+A	src/main/java/dev/vitrail/pack/program/ProgramSet.java
+A	src/main/java/dev/vitrail/pack/program/TerrainPass.java
+A	src/main/java/dev/vitrail/pack/source/BlockComments.java
+A	src/main/java/dev/vitrail/pack/source/ConditionStack.java
+A	src/main/java/dev/vitrail/pack/source/DimensionSet.java
+A	src/main/java/dev/vitrail/pack/source/ExpansionStats.java
+A	src/main/java/dev/vitrail/pack/source/IncludeExpander.java
+A	src/main/java/dev/vitrail/pack/source/KeptPack.java
+A	src/main/java/dev/vitrail/pack/source/Macros.java
+A	src/main/java/dev/vitrail/pack/source/OpenedPack.java
+A	src/main/java/dev/vitrail/pack/source/PackLang.java
+A	src/main/java/dev/vitrail/pack/source/PreprocessorExpression.java
+A	src/main/java/dev/vitrail/pack/source/PropertiesFile.java
+A	src/main/java/dev/vitrail/pack/source/ShaderPackSource.java
+A	src/main/java/dev/vitrail/pack/source/ShaderProperties.java
+A	src/main/java/dev/vitrail/pack/source/ShadowCasters.java
+A	src/main/java/dev/vitrail/pack/source/ShadowCullState.java
+A	src/main/java/dev/vitrail/pack/source/SourceMentions.java
+A	src/main/java/dev/vitrail/pack/target/ChainPlan.java
+A	src/main/java/dev/vitrail/pack/target/ConstDirectives.java
+A	src/main/java/dev/vitrail/pack/target/DrawBuffers.java
+A	src/main/java/dev/vitrail/pack/target/PackDirectives.java
+A	src/main/java/dev/vitrail/pack/target/SamplerPlan.java
+A	src/main/java/dev/vitrail/pack/target/SamplerTypes.java
+A	src/main/java/dev/vitrail/pack/target/TargetDirectives.java
+A	src/main/java/dev/vitrail/pack/target/TargetPlan.java
+A	src/main/java/dev/vitrail/pack/target/TargetSchedule.java
+A	src/main/java/dev/vitrail/pack/texture/CustomImageView.java
+A	src/main/java/dev/vitrail/pack/texture/CustomImages.java
+A	src/main/java/dev/vitrail/pack/texture/CustomStorage.java
+A	src/main/java/dev/vitrail/pack/texture/PackTextures.java
+A	src/main/java/dev/vitrail/pack/texture/RawImage.java
+A	src/main/java/dev/vitrail/pack/texture/RawTexels.java
+A	src/main/java/dev/vitrail/pack/texture/VolumeAtlas.java
+A	src/main/java/dev/vitrail/platform/PatchedMethods.java
+A	src/main/java/dev/vitrail/platform/VitrailPlatform.java
+A	src/main/java/dev/vitrail/render/BiomeClassifier.java
+A	src/main/java/dev/vitrail/render/BiomeHumidity.java
+A	src/main/java/dev/vitrail/render/BlockEntityMark.java
+A	src/main/java/dev/vitrail/render/BlockEntityOrigin.java
+A	src/main/java/dev/vitrail/render/BlockStateIds.java
+A	src/main/java/dev/vitrail/render/CameraBob.java
+A	src/main/java/dev/vitrail/render/CapturedProjection.java
+A	src/main/java/dev/vitrail/render/DriverTrig.java
+A	src/main/java/dev/vitrail/render/EntityFrame.java
+A	src/main/java/dev/vitrail/render/FaceShading.java
+A	src/main/java/dev/vitrail/render/FrameState.java
+A	src/main/java/dev/vitrail/render/HandDraw.java
+A	src/main/java/dev/vitrail/render/PackImages.java
+A	src/main/java/dev/vitrail/render/PackNameIds.java
+A	src/main/java/dev/vitrail/render/PackValues.java
+A	src/main/java/dev/vitrail/render/ShadowAmortisation.java
+A	src/main/java/dev/vitrail/render/ShadowCullPlan.java
+A	src/main/java/dev/vitrail/render/ShadowTargets.java
+A	src/main/java/dev/vitrail/render/TextureUsage.java
+A	src/main/java/dev/vitrail/render/ViewMatrices.java
+A	src/main/java/dev/vitrail/render/pbr/package-info.java
+A	src/main/java/dev/vitrail/render/storage/package-info.java
+A	src/main/java/dev/vitrail/render/timing/package-info.java
+A	src/main/java/dev/vitrail/screen/PackHost.java
+A	src/main/java/dev/vitrail/settings/PackFile.java
+A	src/main/java/dev/vitrail/settings/PackSession.java
+A	src/main/java/dev/vitrail/settings/SettingsFile.java
+A	src/main/java/dev/vitrail/settings/SettingsLayers.java
+A	src/main/java/dev/vitrail/uniform/BiomeCategory.java
+A	src/main/java/dev/vitrail/uniform/ClipSpace.java
+A	src/main/java/dev/vitrail/uniform/NoiseTexture.java
+A	src/main/java/dev/vitrail/uniform/Smoothed.java
+A	src/main/java/dev/vitrail/uniform/Std140Counter.java
+A	src/main/java/dev/vitrail/uniform/TextSink.java
+A	src/main/java/dev/vitrail/uniform/UniformBlock.java
+A	src/main/java/dev/vitrail/uniform/UniformCatalog.java
+A	src/main/java/dev/vitrail/uniform/UniformCoercion.java
+A	src/main/java/dev/vitrail/uniform/UniformGaps.java
+A	src/main/java/dev/vitrail/uniform/UniformShape.java
+A	src/main/java/dev/vitrail/uniform/UniformSink.java
+A	src/main/java/dev/vitrail/uniform/UniformSource.java
+A	src/main/java/dev/vitrail/uniform/Val.java
+A	src/main/java/dev/vitrail/uniform/ViewSource.java
+A	src/main/java/dev/vitrail/uniform/WorldState.java
+A	src/main/java/dev/vitrail/uniform/expr/BooleanVectorizedFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/CustomUniforms.java
+A	src/main/java/dev/vitrail/uniform/expr/ExprFunctions.java
+A	src/main/java/dev/vitrail/uniform/expr/ExprGrammar.java
+A	src/main/java/dev/vitrail/uniform/expr/FrameClock.java
+A	src/main/java/dev/vitrail/uniform/expr/MatrixType.java
+A	src/main/java/dev/vitrail/uniform/expr/VectorConstructor.java
+A	src/main/java/dev/vitrail/uniform/expr/VectorType.java
+A	src/main/java/dev/vitrail/uniform/expr/VectorizedFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/Util.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/AccessibleExpressionElement.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/Element.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/ExpressionElement.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/PriorityOperatorElement.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/token/BinaryOperatorToken.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/token/IdToken.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/token/NumberToken.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/token/Token.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/token/UnaryOperatorToken.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/AccessExpressionElement.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/BinaryExpressionElement.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/FunctionCall.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/UnaryExpressionElement.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/partial/PartialBinaryExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/partial/PartialExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/element/tree/partial/UnfinishedArgsExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/exception/MissingTokenException.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/exception/ParseException.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/exception/UnexpectedCharacterException.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/exception/UnexpectedEndingException.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/exception/UnexpectedTokenException.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/expression/BasicVariableExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/expression/CallExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/expression/ConstantExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/expression/Expression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/expression/VariableExpression.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/AbstractTypedFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/B2BFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/BB2BFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/BasicFunctionContext.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/F2FFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/F2IFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FF2BFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FF2FFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FFF2BFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FFF2FFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FunctionContext.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FunctionResolver.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/FunctionReturn.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/I2FFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/I2IFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/II2BFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/II2IFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/III2BFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/III2IFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/Type.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/TypedFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/V2FFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/function/V2IFunction.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/package-info.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/BinaryOp.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/OpResolver.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/Parser.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/ParserOptions.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/StringReader.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/Tokenizer.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/parser/UnaryOp.java
+A	src/main/java/dev/vitrail/uniform/expr/kroppeb/stareval/resolver/ExpressionResolver.java
+A	src/main/java/dev/vitrail/uniform/expr/package-info.java
+A	src/main/java/dev/vitrail/uniform/package-info.java
+A	src/main/java/dev/vitrail/uniform/values/CameraValues.java
+A	src/main/java/dev/vitrail/uniform/values/CelestialValues.java
+A	src/main/java/dev/vitrail/uniform/values/DhValues.java
+A	src/main/java/dev/vitrail/uniform/values/DrawValues.java
+A	src/main/java/dev/vitrail/uniform/values/FrameSmoothed.java
+A	src/main/java/dev/vitrail/uniform/values/GeometryValues.java
+A	src/main/java/dev/vitrail/uniform/values/MatrixValues.java
+A	src/main/java/dev/vitrail/uniform/values/PlayerValues.java
+A	src/main/java/dev/vitrail/uniform/values/Settled.java
+A	src/main/java/dev/vitrail/uniform/values/ShadowGeometryValues.java
+A	src/main/java/dev/vitrail/uniform/values/ShadowMatrixValues.java
+A	src/main/java/dev/vitrail/uniform/values/TimeValues.java
+A	src/main/java/dev/vitrail/uniform/values/WeatherValues.java
+A	src/main/java/dev/vitrail/uniform/values/WorldValues.java
+A	src/main/java/dev/vitrailvk/GameVersion.java
+A	src/main/java/dev/vitrailvk/NeoForgePlatform.java
+A	src/main/java/dev/vitrailvk/VitrailVk.java
+A	src/main/java/dev/vitrailvk/compile/PackCompileCheck.java
+A	src/main/java/dev/vitrailvk/compile/PackCompileTool.java
+A	src/main/java/dev/vitrailvk/compile/SpirvCompiler.java
+A	src/main/java/dev/vitrailvk/compile/SpirvModule.java
+A	src/main/java/dev/vitrailvk/dev/AutoTest.java
+A	src/main/java/dev/vitrailvk/mixin/BiomesMixin.java
+A	src/main/java/dev/vitrailvk/mixin/CustomVertexFormatMixin.java
+A	src/main/java/dev/vitrailvk/mixin/DeviceManagerMixin.java
+A	src/main/java/dev/vitrailvk/mixin/DrawBuffersAccessor.java
+A	src/main/java/dev/vitrailvk/mixin/DrawParametersAccessor.java
+A	src/main/java/dev/vitrailvk/mixin/GameRendererMixin.java
+A	src/main/java/dev/vitrailvk/mixin/LevelRendererMixin.java
+A	src/main/java/dev/vitrailvk/mixin/RendererMixin.java
+A	src/main/java/dev/vitrailvk/mixin/TerrainBufferBuilderMixin.java
+A	src/main/java/dev/vitrailvk/mixin/TextureAtlasAccessor.java
+A	src/main/java/dev/vitrailvk/mixin/WorldRendererAccessor.java
+A	src/main/java/dev/vitrailvk/mixin/WorldRendererMixin.java
+A	src/main/java/dev/vitrailvk/pack/ShaderPacks.java
+A	src/main/java/dev/vitrailvk/render/Families.java
+A	src/main/java/dev/vitrailvk/render/LevelCapture.java
+A	src/main/java/dev/vitrailvk/render/Machine.java
+A	src/main/java/dev/vitrailvk/render/PackPipeline.java
+A	src/main/java/dev/vitrailvk/render/PackRenderer.java
+A	src/main/java/dev/vitrailvk/render/PackTargets.java
+A	src/main/java/dev/vitrailvk/render/RenderPasses.java
+A	src/main/java/dev/vitrailvk/terrain/ExtendedVertexBuilder.java
+A	src/main/java/dev/vitrailvk/terrain/TerrainFormat.java
+A	src/main/java/dev/vitrailvk/vk/HostBuffer.java
+A	src/main/java/dev/vitrailvk/vk/Std140Writer.java
+A	src/main/java/dev/vitrailvk/vk/Vk.java
+A	src/main/resources/META-INF/neoforge.mods.toml
+A	src/main/resources/vitrailvk.mixins.json
+commit b65080c8a9124a5d9b3301788cd8df0b2ee5160a
+Shadow maps: terrain from the light, shadowtex0/1, shadowcolor and comparing sampler
+
+A	STATE.md
+M	src/main/java/dev/vitrailvk/mixin/LevelRendererMixin.java
+M	src/main/java/dev/vitrailvk/render/PackPipeline.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+A	src/main/java/dev/vitrailvk/render/ShadowMaps.java
+commit 496a71ce377493902512f5b90f429c6d9be398bf
+Fix release jar build; rendering and compatibility remain
+
+M	STATE.md
+M	build.gradle
+commit 47dd982140ea8e254f4df39800b6bf7e6cbf1b23
+Defer failed pack cleanup until frame ends; mesh rendering remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/mixin/RendererMixin.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 07414e4c75b73d4bbbd04e556746b6a7cfe3afff
+Add frame-slot mesh staging arena; mesh draws remain
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/render/FrameArena.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 35a02a16b642062ea7247cf8442c25ebeba03bc4
+Prepare entity, block and item identifiers; capture remains
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/render/DrawIds.java
+commit ab5e14a4450201392f2ccc1e4af0fd2560cc824b
+Keep mesh arena allocations for the whole recorded frame
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 0faeb5d1a9df45a049e7ca131b8ccadf967db0bf
+Stage immediate mesh vertices and indices; rendering hooks remain
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/render/MeshDraw.java
+commit 45ea86cb51779f645a34f655e514091a5472cfa7
+Track sky, cloud and weather phases; mesh hooks remain
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/mixin/LevelRendererMixin.java
+M	src/main/java/dev/vitrailvk/render/Families.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 4a44b118f3b290de269fb3857cdbe8e6e61fe931
+Track hand and particle phases; deferred hand split remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/mixin/GameRendererMixin.java
+A	src/main/java/dev/vitrailvk/mixin/ParticleEngineMixin.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 89eb121fbba242145788d10bdcf1f79281c3fb15
+Prepare missing mesh vertex attributes; draw integration remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/MeshDraw.java
+commit 718043f90ff5851d250e0e50eb049a6dcff9b159
+Prepare mesh program cache; draw routing and family plan remain
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/render/MeshPrograms.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit d76219ae7be2f5839d0f452fbc1d974bb8cb2fc1
+Populate per-draw transform block; mesh routing remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 7c6401e2d252c81b080df19151171c3d275c3d0c
+Prepare mesh pass recording with Vulkan render state; draw hooks remain
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 5141c2bb181dc4f20c6af3cedb0a897560a45358
+Route phase-scoped immediate meshes to pack passes; VBO and entities remain
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/BufferUploaderMixin.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 127654600223a0c34e9a78cc1c8718f03863f490
+Accept stored mesh buffers and draw matrices; VBO capture remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/MeshDraw.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 8a49ce3e54d46535f1ffd9b83621d578fdd046e4
+Route captured static sky and cloud VBOs; entity meshes remain
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/VertexBufferMixin.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 32191068ff415136085dc387884af79173ba0e14
+Capture nested entity and block entity ID contexts; batching remains
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/BlockEntityRenderDispatcherMixin.java
+A	src/main/java/dev/vitrailvk/mixin/EntityRenderDispatcherMixin.java
+M	src/main/java/dev/vitrailvk/render/DrawIds.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 4ede8b284905c6b552d3e5f780d6e2e4125f57f2
+Preserve entity identifiers per buffered vertex; binding remains
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/BufferBuilderMixin.java
+A	src/main/java/dev/vitrailvk/mixin/MeshDataMixin.java
+M	src/main/java/dev/vitrailvk/render/DrawIds.java
+A	src/main/java/dev/vitrailvk/render/MeshIds.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 751d0b0a40d58ed073c65d6ad3b381b1528c413e
+Bind identifiers per vertex across batches; entity routing remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/MeshDraw.java
+M	src/main/java/dev/vitrailvk/render/PackPipeline.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit bf944ca98320a65a89c9358579be57dc84adc71b
+Route homogeneous entity and block entity batches; mixed batches remain
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/DrawIds.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 686af9b07eaa07246aa6591a443e230cc75087f3
+Capture item and block item IDs across buffered geometry
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/ItemRendererMixin.java
+M	src/main/java/dev/vitrailvk/render/DrawIds.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 9be15f301abc62d16639a997241a88a8f8a79626
+Prepare separate opaque and translucent hand passes; scheduling remains
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/GameRendererAccessor.java
+A	src/main/java/dev/vitrailvk/mixin/ItemInHandRendererMixin.java
+A	src/main/java/dev/vitrailvk/render/HandPass.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 97c849e4206f6cbb739240ab4eba4681a8d66a52
+Schedule opaque and translucent hands around deferred stage
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/mixin/GameRendererMixin.java
+M	src/main/java/dev/vitrailvk/mixin/LevelRendererMixin.java
+M	src/main/java/dev/vitrailvk/render/Families.java
+M	src/main/java/dev/vitrailvk/render/HandPass.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit b93cd9eab08d94502cba8b4da392d04f47eb3150
+Prepare order-preserving entity batch partitioning; routing remains
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/render/MixedMesh.java
+commit d3cb236afbe7b8734008c21c8e9fdf87d0d1d400
+Draw mixed entity and block entity batches in original triangle order
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit d36f8fc0d02f1895f379722b3ab431cd0fdfc6bd
+Derive quad midpoint and tangent attributes; other primitives remain defaults
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/MeshDraw.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit d0570100eb51c4dda1490c3f9122e2770f85565c
+Enable entity and particle families in chain plan; runtime verification remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 0616f7bbb57beab7c8309b7653b81f52693d2233
+Generate requested shadow depth mip chains when supported; shadow entities remain
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/java/dev/vitrailvk/render/ShadowMaps.java
+commit c6bce41fd5825d8e1f26d21862ee58364fa54471
+Prepare shadow entity pipeline variants; shadow draw remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/MeshPrograms.java
+commit efe95175e273bf9a8ec1e4eff2ee5bdf9372066f
+Prepare shadow mesh draws with attachment feedback guard; caster walk remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit f4677631abd31002e78185bd8e05d69974768746
+Submit entity and block entity meshes during shadow stage; shadowcomp remains
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/LevelRendererAccessor.java
+M	src/main/java/dev/vitrailvk/mixin/LevelRendererMixin.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+A	src/main/java/dev/vitrailvk/render/ShadowFeatures.java
+M	src/main/resources/vitrailvk.mixins.json
+commit 5b2e4ee8bc552a3350d1fb0118377c51c8c892b1
+Load enabled shadow composite graphics programs; shadow target scheduling remains
+
+M	STATE.md
+M	src/main/java/dev/vitrail/glsl/PackProgram.java
+commit d132926990a010170482ae2958c6f1f574592070
+Prepare paired shadow color targets and flip tracking
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/ShadowMaps.java
+commit 1e37b622f3b0f3af5da9d6ca67cc9a33545c9d30
+Prepare shadow composite pipelines and target allocation; pass execution remains
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 7ada11ea4ea360ff8f166a935fb303f966867c5f
+Run shadow composite graphics with independent target flips
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+commit 993b2314dbaad264cc9af4f3926cccc0138e3267
+Apply shadow composite mipmaps and fullscreen viewport directives
+
+M	STATE.md
+M	src/main/java/dev/vitrail/pack/source/ShaderProperties.java
+M	src/main/java/dev/vitrail/pack/target/TargetPlan.java
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+M	src/main/java/dev/vitrailvk/render/ShadowMaps.java
+commit 37cec79dac5c1b137a73a76b66339733551e7f93
+Extend Vulkan images for volume textures and GENERAL layout barriers
+
+M	STATE.md
+A	src/main/java/dev/vitrailvk/mixin/VulkanImageMixin.java
+A	src/main/java/dev/vitrailvk/vk/ImageLayouts.java
+A	src/main/java/dev/vitrailvk/vk/PackImage.java
+M	src/main/resources/vitrailvk.mixins.json
+commit d0510c4514518b665a1a35de2c89897f1fbc7b6e
+Upload and bind pack custom textures and translated volume atlases
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+A	src/main/java/dev/vitrailvk/render/TextureImages.java
+M	src/main/java/dev/vitrailvk/vk/PackImage.java
+commit b9cb8a60d017bd132d7770d73436bf388a838968
+Allocate and bind persistent pack storage images and SSBOs
+
+M	STATE.md
+M	src/main/java/dev/vitrailvk/render/PackRenderer.java
+A	src/main/java/dev/vitrailvk/render/PackStorage.java
+M	src/main/java/dev/vitrailvk/vk/PackImage.java
+A	src/main/java/dev/vitrailvk/vk/StorageBuffer.java
+commit 39fd05ee56202893e95ebbe0673aaefff85c623e
+Hand off shader renderer state and the next compute implementation step
+
+A	HANDOFF.txt
+M	STATE.md

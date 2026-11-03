@@ -1,0 +1,91 @@
+VITRAIL VK — PŘEDÁNÍ VĚTVE codex-work
+Repozitář matybachy/vulkan-shaders-neoforge
+Poslední implementační commit b9cb8a6. Před zápisem předání byl pracovní strom čistý a lokální větev odpovídala origin/codex-work. Tento soubor a STATE.md tvoří samostatný dokumentační commit nad b9cb8a6.
+
+1. Co je implementované
+
+• Základ. Projekt sestavuje klientský mod vitrailvk pro Minecraft 1.21.1 a NeoForge 21.1.228 na Javě 21. build.gradle používá release JAR VulkanMod Reforged (VMR) a při jeho stažení kontroluje SHA-256 z gradle.properties. VitrailVk a NeoForgePlatform spojují platformu a pack loader.
+
+• Pack a překlad. dev.vitrail.pack obsahuje načtení balíčku, shaders.properties, volby, profily, vyhodnocení podmínek, výběr programů podle dimenze a plán render targetů. ShaderPacks čte a ukládá shaderPack, profile a option.* v config/vitrailvk.properties. Podporuje také systémové volby vitrailvk.pack a vitrailvk.options. OpenedPack poskytuje zdrojová data překladači. PackProgram sestavuje grafické programy, SpirvCompiler kompiluje GLSL přes shaderc, SpirvModule sjednocuje vazby a vstupy a PackPipeline vytváří Vulkan pipeline. PackValues, UniformBlock a Std140Writer zásobují programy hodnotami.
+
+• Terén a hlavní řetězec. TerrainFormat a ExtendedVertexBuilder rozšiřují komprimované vrcholy VMR z 20 na 40 bajtů. CustomVertexFormatMixin a TerrainBufferBuilderMixin připojují formát a zápis vrcholů. WorldRendererMixin a PackRenderer obsluhují vrstvy terénu. PackTargets, RenderPasses a PackPipeline spravují více barevných výstupů, hloubku, framebuffer a stav kreslení. Kód obsahuje begin, prepare, deferred, composite, final nebo prezentaci colortex0, noise texturu, mipmapy, nastavení blendování a kopie hloubky. Při chybě v draw přebírá úklid po skončení snímku dvojice PackRenderer.fail / frameEnded.
+
+• Položka 5. Families vybírá program podle fáze, shaderu a vertex formátu. MeshPrograms řeší program packu a jeho variantu. FrameArena, MeshDraw, MeshIds, DrawIds a MixedMesh řeší uložení dat, doplňkové atributy, identitu entity/BER/předmětu a rozdělení dávek. ID se ukládá u vrcholu při stavbě, takže zůstane dostupné při pozdějším flush. BufferUploaderMixin přebírá podporované okamžité meshe, VertexBufferMixin ukládá statické VBO oblohy a mraků. LevelRendererMixin, ParticleEngineMixin a GameRendererMixin vymezují fáze. HandPass a ItemInHandRendererMixin dělí kreslení ruky kolem deferred. Smíšená dávka se dělí po souvislých skupinách trojúhelníků v původním pořadí. ChainPlan.Families v PackRenderer již zapíná rodiny entit i částic.
+
+• Položka 4. ShadowMaps vlastní shadowtex0/1, shadowcolor a porovnávací samplery. PackRenderer.openAndShadow kreslí pevný a vystřihovaný terén, volá ShadowFeatures pro entity a block entity, kopíruje hloubku, kreslí průsvitný terén a generuje požadované úrovně shadow depth tam, kde je podporuje formát. ShadowFeatures používá světelné matice a samostatný buffer, načítá BER ze sekcí i z iterateVisibleBlockEntities. PackProgram.loadShadowComposites a PackRenderer.runShadowComposites načítají a kreslí grafické shadowcomp v pořadí slotů před prepare. Barevné targety mají vlastní dvojice, pravidla flip včetně shadowcomp_pre, podporu scale a požadovaných barevných mipmap.
+
+• Implementované části položky 6. PackImage vytváří 1D/2D/3D Vulkan obraz, view a sampler. ImageLayouts a VulkanImageMixin doplňují GENERAL i synchronizaci mezi použitími. TextureImages řeší texture.* a customTexture.*, PNG, podporované raw lookup textury, atlas v podobě, kterou očekává překladač, a herní textury včetně atlasu od TextureManageru. PackStorage vytváří image.* včetně relativních rozměrů, zajišťuje clear a vybírá typované view. StorageBuffer drží GPU paměť pro bufferObject.*. PackRenderer.writeDescriptors zapisuje storage image a SSBO a používá GENERAL, pokud se jeden obraz zároveň sampluje i zapisuje.
+
+2. Co je rozpracované
+
+Aktivní položkou je 6. PackProgram.loadCompute umí načíst .csh, Compute.groupsAt odvodí počty skupin a PackPipeline.Kind.COMPUTE i PackPipeline.compute() už existují. PackCompileCheck načítá compute pro samostatný nástroj. Herní PackRenderer ale nevolá loadCompute ani vkCmdDispatch. Pack používající pouze grafické průchody a pack závislý na výsledku compute jsou proto v různém stavu. Přesné pokračování je v části 7.
+
+TextureImages podporuje jen tvary a typy, které umí převést. Packed, BGR, integer raw a rectangle zatím odmítá. Podporované 3D soubory vykresluje přes atlas odpovídající VolumeFlattening. PackImage a PackStorage podporují také skutečný 3D obraz. Tyto dvě cesty mají odlišné shaderové deklarace.
+
+U položek 4 a 5 jsou připojené vstupní body. Zbývají konkrétní okrajové případy popsané níže a runtime ověření. GUI, modové backendy a runtime DH potřebují vlastní implementaci.
+
+3. Zbývající priority
+
+5 — Prověř v kódu pokrytí modovaných RenderType, jiných primitiv než quads a nestatických VBO. Zkontroluj hand fallback, aby nedošlo k vynechání nebo dvojímu vykreslení ruky. Neznámý formát nebo nepodporovaný stav může předat dávku zpět VMR. Výsledek ve všech pack targetech dosud nikdo nepotvrdil.
+
+4 — V PackRenderer.shadowMesh je explicitní návrat pro shader čtoucí shadow depth nebo shadow colour. Potřebuje bezpečný zdroj pro čtení během zápisu, např. správně načasovaný snapshot. Prověř, že terrain shadow path dodržuje stejná pravidla a že nečte právě zapisovanou hloubku. U shadowcomp se má compute zařadit ke konkrétnímu slotu včetně samostatného compute bez fragmentu.
+
+6 — Připojit compute podle části 7. Dokončit zbývající tvary/raw konverze nebo zveřejnit přesné omezení. Prověřit životnost alokací při chybě během částečné inicializace packu a čtení/zápis stejného targetu z různých fází.
+
+7 — V dev/vitrail/pack/menu jsou PackMenu, MenuPage, MenuSlot, MenuOption a MenuValues. V dev/vitrailvk/pack/ShaderPacks jsou select a saveOptions, v rendereru je reload. Chybí vstup Shader Packs ve video nastavení, obrazovka výběru a nastavení podle screen.*, sliders a profile, předání diagnostiky kompilace uživateli a ovládání návratu na vypnuté shadery. Pro změnu packu se stejným formátem navázat na reload v bezpečném okamžiku snímku. Pro změnu vyžadující jiný stride uložit volbu a zobrazit nutnost restartu.
+
+A — V refs/VulkanMod-Reforged na 0618965 existuje net/vulkanmod/compat/sable/flywheel. Initializer volá VulkanFlywheelBootstrap.registerIfPresent(), VulkanFlywheelBackend implementuje Flywheel Backend a jeho probe závisí mj. na vlastnosti vulkanmod.compat.sable.flywheel.experimental. V build.gradle této reference je compileOnly Flywheel 1.0.6. To dokládá přítomnost experimentální cesty, nikoli propojení s shader packem. Zjistit, jak engine odesílá draw, získat odpovídající zdroje Flywheel/Create/Colorwheel do refs/ a připojit programy packu podle reálného rozhraní. Pro nepoužitelnou konfiguraci řešit Flywheel off a Create přes vanilla BER. Samostatné klony těchto tří modů v místním refs/ při předání nebyly.
+
+B — Obecná cesta entit a BER už existuje. Doplnit mapování modovaných vrstev včetně Mekanismu na gbuffers_block, entities, water, particles a shadow. Ověřit typy ve zdrojích příslušných verzí. Pro Iris API případně navrhnout jen minimální doložený shim. Mod má vlastní ID vitrailvk.
+
+C — dev/vitrail/dh/DhDepth umí zjišťovat parametry projekce a vzdálenost, dev/vitrail/glsl/DistantVertex poskytuje práci s DH vrcholy. Samotná přítomnost těchto tříd nepřipojuje vykreslování. Ověřit podporované rozhraní DH, získání geometrie, matice i hloubku, vybrat cestu bez forku, pokud je použitelná. Doplnit odeslání dh_terrain, dh_water, dh_shadow a skládání hloubky s hlavní scénou.
+
+Release — Metadata i licenční soubory už existují. src/main/resources/META-INF/neoforge.mods.toml žádá přesnou verzi [${vulkanmod_version}], gradle.properties má 0.3.5-ALPHA+1.21.1, tag mc-1.21.1-0618965, LWJGL 3.3.3. build.gradle balí LICENSE, COPYING, NOTICE a NOTICE-vitrail. Po dokončení integrací zkontrolovat původ nově převzatých částí, doplnit NOTICE, ověřit výsledná metadata v JAR, sestavit a commitnout. Sestavený alpha JAR je průběžný výstup.
+
+4. Orientace v historii (od nejnovějších implementačních změn)
+
+b9cb8a6  PackStorage, StorageBuffer, typované image views a zápis storage deskriptorů.
+d0510c4  Nahrání pack textur, lookup atlasů a napojení pojmenovaných samplerů.
+37cec79  PackImage, ImageLayouts a VulkanImageMixin pro GENERAL.
+993b231  Barevné shadowcomp mipmapy a viewport direktivy.
+7ada11e  Spuštění shadowcomp grafiky a přepínání barevných targetů.
+1e37b62, d132926, 5b2e4ee  Příprava shadowcomp pipeline, dvojic targetů a loaderu.
+f467763, efe9517, c6bce41  Odeslání entity/BER stínů, shadow mesh a jeho programových variant.
+0616f7b  Mipmapy shadow depth při podpoře potřebných blit operací.
+d057010, d36f8fc  Zapnutí rodin entit a částic v plánu, mid-UV a tangent quadů.
+d3cb236, b93cd9e  Rozdělení smíšených dávek a vykreslení ve stejném pořadí.
+97c849e, 9be15f3  Fáze ruky a její umístění kolem deferred.
+686af9b, bf944ca, 751d0b0, 4ede8b2, 3219106  Identita itemů, entit a BER od dispatcheru přes vrchol do draw.
+8a49ce3, 1276546, 5141c2b, 7c6401e  VBO oblohy/mraků, přímé meshe a jejich stav.
+47dd982  Odložený úklid packu po chybě ve snímku. 496a71c opravil sestavení release JAR.
+b65080c  Stínové mapy terénu. f79800c obnovil projekt a základní renderer.
+
+5. Poslední ověření sestavení
+
+V kořeni repozitáře proběhl s JAVA_HOME nastaveným na C:\Program Files\Zulu\zulu-21 příkaz .\gradlew.bat build. Na implementační revizi b9cb8a6 před zápisem předání skončil BUILD SUCCESSFUL, čtyři úlohy up-to-date. Při původním buildu storage kroku proběhly compileJava i jar. Výstup je build/libs/vitrailvk-0.1.0-alpha.jar. Gradle hlásí test NO-SOURCE. Hra, autotest ani checkPacks se při předání nespouštěly.
+
+6. TODO-VERIFY a technická rizika
+
+Přímý seznam najdeš příkazem rg -n 'TODO-VERIFY' src/main/java. vitrailvk.mixins.json má defaultRequire 1. Java kompilace neověří pořadí a úspěšné použití injekcí při startu. U nového mixinu porovnej descriptor, vlastníka a bod injekce s konkrétní verzí v refs/. Neověřitelný volitelný cíl má mít require=0, komentář s důvodem a záznam v STATE.md.
+
+Pro dalšího runtime agenta jsou zásadní dvě větve translucence a NeoForge hooky u ruky, projekce a obnova stavu po stínových entitách, pořadí BufferUploader/VBO vůči VMR, identita ve smíšených dávkách a bezpečné opětovné použití FrameArena při více renderech levelu během snímku. DynamicTransforms používá nulový model offset. U jiných primitiv než quads zůstávají u části atributů výchozí hodnoty. centerDepth nemá vyhlazení.
+
+U Vulkanu ověř paritu shadowcolor po explicitních flipech, podporu blit/filtrace konkrétního formátu, layouty a paměťovou viditelnost mezi graphics/transfer/compute, zánik obrazů až po dokončení práce GPU, relativní resize a shodu typed views se SPIR-V. PackRenderer.writeDescriptors odmítá binding storage image, který zároveň patří mezi framebuffer výstupy. U nových compute passů zachovej tuto kontrolu a hlídej současné samplování ze stejného obrazu.
+
+7. Přesné místo pokračování — položka 6, runtime .csh
+
+1) Začni v src/main/java/dev/vitrailvk/render/PackRenderer.java. Konstruktor už otevírá OpenedPack, sestavuje chain a shadowComposites. Nad chain.targets().computes() připrav malou tabulku compute programů pro chain.place(), respektuj dimenzi, vypnuté položky a mezery v písmenech. Použij existující dev/vitrail/glsl/PackProgram.loadCompute, dev/vitrailvk/render/PackPipeline.Kind.COMPUTE a vhodný UniformBlock. Doplň úklid i pro neúspěšný konstruktor. Toto je první samostatně sestavitelný krok.
+
+2) Pak napoj dispatch do hlavního command bufferu mimo render pass. Ověř schopnost queue family, limity zařízení a velikost práce. PackProgram.Compute má sized(), fixed(), relative() a groupsAt(width,height). Nula může být záměrné vypnutí. U nevyřešené velikosti nehádej. Použij compute pipeline a její set, stávající writeDescriptors a potřebné bariéry. Nezaměň explicitní, odvozené a indirect dispatch.
+
+3) Sestav časování podle refs/Iris, zejména IrisRenderingPipeline, CompositeRenderer a ShadowCompositeRenderer. Místa v našem rendereru jsou openFrame, runPasses, openAndShadow, runShadowComposites a finishFrame. Odliš jednorázové setup, shadow před kreslením mapy, shadowcomp po mapě, begin/prepare/deferred/composite před odpovídajícím grafickým slotem a final. Zahrň compute-only sloty a písmena ve správném pořadí, i když chybí fragment. TargetPlan.passing(), ProgramNames.frameOrder(), TargetSchedule a SamplerPlan poskytují existující podklady pro umístění a volbu půlky targetu. Rozměr dispatch vybírej zvlášť pro každý druh průchodu podle reference.
+
+4) Po každém kroku aktualizuj STATE.md, spusť build, commitni na codex-work a pokračuj. Po compute následuje GUI. Implementační agent podle zadání nespouští hru ani testovací nástroje.
+
+8. Rozhodnutí, která další změny musí respektovat
+
+VMR poskytuje zařízení a command buffer. Mod nad nimi vlastní packové render passy, pipeline, deskriptorové pooly a MRT. VMR se používá jako externí release JAR. refs/ je v .gitignore a neputuje s klonem projektu. Místní podklady jsou VulkanMod-Reforged, Iris, Vitrail-Shaders a Iris-Vulkan-Port. Pro cíle VMR používej zdroje commitu 0618965. Převzatý kód má původ uvedený v hlavičkách a NOTICE. Vlastní backend patří do dev.vitrailvk.
+
+Hlavní render targety mají GL orientaci, při prezentaci se řeší překlopení. Hloubka používá D32 a ClipSpace.FORWARD. Hlavní řetězec a shadowcomp mají samostatný stav přepínání targetů. Terénní formát se rozhodne při inicializaci tříd podle vybraného packu a VMR z něj odvozuje trvalý stride. GUI proto musí rozlišit výměnu kompatibilního packu od změny formátu.
+
+Zachovej verze v gradle.properties. STATE.md smí mít nejvýš 30 řádků, před větším celkem má obsahovat „V PRÁCI: …“. Nová místa vyžadující běhové potvrzení označ // TODO-VERIFY: s důvodem. Tento vyžádaný HANDOFF.txt je podrobný snímek stavu k předání.

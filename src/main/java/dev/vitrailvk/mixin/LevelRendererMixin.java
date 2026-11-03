@@ -1,6 +1,10 @@
 package dev.vitrailvk.mixin;
 
 import dev.vitrailvk.render.PackRenderer;
+import dev.vitrailvk.render.Families;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
@@ -28,7 +32,55 @@ public abstract class LevelRendererMixin {
 	private void vitrailvk$beforeSky(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
 			GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix,
 			CallbackInfo ci) {
-		var position = camera.getPosition();
-		PackRenderer.beforeSky(position.x, position.y, position.z);
+		PackRenderer.beforeSky(camera, deltaTracker.getGameTimeDeltaPartialTick(true));
 	}
-}
+
+	// TODO-VERIFY: verify the phases against NeoForge sky, cloud and weather extensions at runtime.
+	@WrapMethod(method = "renderSky")
+	private void vitrailvk$skyPhase(Matrix4f view, Matrix4f projection, float tick, Camera camera,
+			boolean foggy, Runnable fog, Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.SKY);
+		try {
+			original.call(view, projection, tick, camera, foggy, fog);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}
+
+	// TODO-VERIFY: confirm cloud extension ordering at runtime.
+	@WrapMethod(method = "renderClouds")
+	private void vitrailvk$cloudPhase(PoseStack poses, Matrix4f view, Matrix4f projection, float tick,
+			double x, double y, double z, Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.CLOUDS);
+		try {
+			original.call(poses, view, projection, tick, x, y, z);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}
+
+	// TODO-VERIFY: confirm weather extension ordering at runtime.
+	@WrapMethod(method = "renderSnowAndRain")
+	private void vitrailvk$weatherPhase(LightTexture light, float tick, double x, double y, double z,
+			Operation<Void> original) {
+		PackRenderer.pushPhase(Families.Phase.WEATHER);
+		try {
+			original.call(light, tick, x, y, z);
+		} finally {
+			PackRenderer.popPhase();
+		}
+	}
+	// TODO-VERIFY: both translucent branches must invoke this once per live frame.
+	@Inject(method = "renderLevel", at = @At(value = "INVOKE",
+			target = "Lnet/minecraft/client/renderer/RenderType;translucent()Lnet/minecraft/client/renderer/RenderType;"))
+	private void vitrailvk$solidHand(DeltaTracker tick, boolean outline, Camera camera, GameRenderer game,
+			LightTexture light, Matrix4f view, Matrix4f projection, CallbackInfo ci) {
+		PackRenderer.renderSolidHand(camera, game, tick.getGameTimeDeltaPartialTick(true));
+	}
+
+	// TODO-VERIFY: verify this return occurs after deferred and before the final pass for each graphics mode.
+	@Inject(method = "renderLevel", at = @At("RETURN"))
+	private void vitrailvk$translucentHand(DeltaTracker tick, boolean outline, Camera camera, GameRenderer game,
+			LightTexture light, Matrix4f view, Matrix4f projection, CallbackInfo ci) {
+		PackRenderer.renderTranslucentHand(camera, game, tick.getGameTimeDeltaPartialTick(true));
+	}}
