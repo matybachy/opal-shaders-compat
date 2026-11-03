@@ -1,0 +1,10 @@
+{
+  "vitrailbridge.page.vulkan": "VulkanMod",
+  "vitrailbridge.vulkan.title": "VulkanMod Reforged settings",
+  "vitrailbridge.vulkan.hint": "Renderer, shader packs and these settings are together on one screen.",
+  "vitrailbridge.vulkan.open": "Open",
+  "vitrailbridge.vectors.page.workload": "Workload",
+  "vitrailbridge.vectors.page.tune": "Tuning",
+  "vitrailbridge.vectors.open": "All of Vectors",
+  "vitrailbridge.vectors.open.button": "Open..."
+}

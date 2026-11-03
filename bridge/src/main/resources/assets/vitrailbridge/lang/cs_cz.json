@@ -1,0 +1,10 @@
+{
+  "vitrailbridge.page.vulkan": "VulkanMod",
+  "vitrailbridge.vulkan.title": "Nastavení VulkanMod Reforged",
+  "vitrailbridge.vulkan.hint": "Renderer, shader packy a tato nastavení jsou spolu na jedné obrazovce.",
+  "vitrailbridge.vulkan.open": "Otevřít",
+  "vitrailbridge.vectors.page.workload": "Zátěž",
+  "vitrailbridge.vectors.page.tune": "Ladění",
+  "vitrailbridge.vectors.open": "Celý Vectors",
+  "vitrailbridge.vectors.open.button": "Otevřít..."
+}

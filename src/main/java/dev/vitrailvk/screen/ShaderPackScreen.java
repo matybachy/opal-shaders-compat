@@ -115,15 +115,28 @@ public final class ShaderPackScreen extends Screen {
 	}
 
 	private void openSettings() {
-		Path path = ShaderPacks.directory().resolve(this.chosen);
+		openSettings(this.minecraft, this.chosen, this);
+	}
+
+	/** The settings of a pack, coming back to the screen that is showing now. */
+	void openSettings(Minecraft minecraft, String pack) {
+		openSettings(minecraft, pack, this.parent);
+	}
+
+	private void openSettings(Minecraft minecraft, String pack, Screen back) {
+		Path path = ShaderPacks.directory().resolve(pack);
 		try {
-			String language = this.minecraft.getLanguageManager().getSelected();
-			PackSession session = PackSession.read(this.minecraft.gameDirectory.toPath(), path, language);
-			this.minecraft.setScreen(new PackSettingsScreen(this, session));
+			String language = minecraft.getLanguageManager().getSelected();
+			PackSession session = PackSession.read(minecraft.gameDirectory.toPath(), path, language);
+			minecraft.setScreen(new PackSettingsScreen(back, session));
 		} catch (IOException | RuntimeException e) {
-			VitrailVk.LOGGER.error("Cannot read the settings of {}", this.chosen, e);
-			this.problem = this.chosen + ": " + e;
-			refresh();
+			VitrailVk.LOGGER.error("Cannot read the settings of {}", pack, e);
+			this.problem = pack + ": " + e;
+			if (back == this) {
+				refresh();
+			} else {
+				minecraft.setScreen(this);
+			}
 		}
 	}
 

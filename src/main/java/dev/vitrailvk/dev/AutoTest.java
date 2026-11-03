@@ -219,7 +219,7 @@ public final class AutoTest {
 				case "video" -> new VOptionScreen(Component.literal("Video Setting"), null);
 				case "packs" -> new ShaderPackScreen(null);
 				case "close" -> null;
-				default -> throw new IllegalArgumentException(rest);
+				default -> newScreen(mc, rest);
 			});
 			// A left click in GUI coordinates, or on the first widget whose text holds the words.
 			case "click" -> click(mc, Double.parseDouble(args[0]), Double.parseDouble(args[1]), args.length > 2 ? Integer.parseInt(args[2]) : 0);
@@ -231,6 +231,16 @@ public final class AutoTest {
 			case "note" -> this.notes.add(rest);
 			case "error" -> this.notes.add("last error: " + PackRenderer.lastError().orElse("none"));
 			default -> throw new IllegalArgumentException("Unknown line");
+		}
+	}
+
+	/** Another mod's screen, by the name of its class. */
+	private static net.minecraft.client.gui.screens.Screen newScreen(Minecraft mc, String name) {
+		try {
+			return (net.minecraft.client.gui.screens.Screen) Class.forName(name)
+					.getConstructor(net.minecraft.client.gui.screens.Screen.class).newInstance(mc.screen);
+		} catch (ReflectiveOperationException e) {
+			throw new IllegalArgumentException(name, e);
 		}
 	}
 

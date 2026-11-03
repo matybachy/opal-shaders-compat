@@ -4,6 +4,7 @@ import dev.vitrail.Vitrail;
 import dev.vitrail.pack.option.EngineDefines;
 import dev.vitrailvk.dev.AutoTest;
 import dev.vitrailvk.pack.ShaderPacks;
+import dev.vitrailvk.screen.ShaderPages;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -31,6 +32,8 @@ public final class VitrailVk {
 		Vitrail.initClient(new NeoForgePlatform(container.getModInfo().getVersion().toString()));
 		// Packs branch on MC_VERSION; Vitrail's default is 26.2.
 		EngineDefines.machine(EngineDefines.Environment.of(GameVersion.MC_VERSION));
+
+		ShaderPages.register();
 
 		modBus.addListener(FMLClientSetupEvent.class, event -> {
 			logDevice();

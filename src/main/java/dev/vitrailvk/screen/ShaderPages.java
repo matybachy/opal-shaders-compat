@@ -1,0 +1,145 @@
+package dev.vitrailvk.screen;
+
+import dev.vitrail.pack.load.PackLoader;
+import dev.vitrailvk.VitrailVk;
+import dev.vitrailvk.pack.ShaderPacks;
+import dev.vitrailvk.render.PackRenderer;
+import net.minecraft.ChatFormatting;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.vulkanmod.config.gui.ModSettingsEntry;
+import net.vulkanmod.config.gui.ModSettingsRegistry;
+import net.vulkanmod.config.gui.OptionBlock;
+import net.vulkanmod.config.option.CyclingOption;
+import net.vulkanmod.config.option.Option;
+import net.vulkanmod.config.option.OptionPage;
+import net.vulkanmod.config.option.SwitchOption;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Shaders as a page of VulkanMod Reforged's video settings, through the registry it keeps for other mods: on or off, which
+ * pack, and the way to the pack's settings. Like the rest of that screen it takes effect on Apply.
+ */
+public final class ShaderPages {
+
+	private static final String NONE = "";
+
+	private static SwitchOption enabled;
+	private static CyclingOption<String> pack;
+
+	private ShaderPages() {
+	}
+
+	public static void register() {
+		ModSettingsRegistry.INSTANCE.addModEntry(new ModSettingsEntry(Component.translatable("vitrailvk.page.group"),
+				() -> ResourceLocation.fromNamespaceAndPath(VitrailVk.MOD_ID, "icon.png"),
+				ShaderPages::pages,
+				ShaderPages::apply));
+	}
+
+	private static List<OptionPage> pages() {
+		String[] packs = packs();
+		enabled = new SwitchOption(Component.translatable("vitrailvk.page.shaders"), value -> {},
+				() -> !ShaderPacks.selectedName().isEmpty());
+		enabled.setTooltip(Component.translatable("vitrailvk.page.shaders.tip"));
+		pack = new CyclingOption<>(Component.translatable("vitrailvk.page.pack"), packs, value -> {},
+				() -> shown(packs));
+		pack.setTranslator(name -> name.isEmpty() ? Component.translatable("vitrailvk.page.nopacks") : Component.literal(name));
+		pack.setTooltip(name -> Component.literal(name));
+
+		Option<?> settings = new ActionOption(Component.translatable("vitrailvk.page.settings"), () -> Component.translatable("vitrailvk.page.open"),
+				() -> openSettings(pack.getNewValue())).setActivationFn(() -> packs.length > 0 && !packs[0].isEmpty());
+		Option<?> list = new ActionOption(Component.translatable("vitrailvk.page.list"), () -> Component.translatable("vitrailvk.page.open"),
+				() -> Minecraft.getInstance().setScreen(new ShaderPackScreen(Minecraft.getInstance().screen)));
+		Option<?> folder = new ActionOption(Component.translatable("vitrailvk.screen.folder"), () -> Component.translatable("vitrailvk.page.open"),
+				ShaderPages::openFolder);
+		Option<?> status = new ActionOption(Component.translatable("vitrailvk.page.status"), ShaderPages::status, null);
+		status.setTooltip(value -> statusInFull());
+
+		return List.of(new OptionPage(Component.translatable("vitrailvk.page.packs").getString(), new OptionBlock[] {
+				new OptionBlock("", new Option<?>[] {enabled, pack}),
+				new OptionBlock("", new Option<?>[] {settings, list, folder}),
+				new OptionBlock("", new Option<?>[] {status}),
+		}));
+	}
+
+	private static void apply() {
+		String chosen = enabled.getAppliedValue() ? pack.getAppliedValue() : NONE;
+		if (chosen.equals(ShaderPacks.selectedName())) return;
+		try {
+			ShaderPacks.select(chosen);
+			PackRenderer.reload();
+		} catch (IOException e) {
+			VitrailVk.LOGGER.error("Cannot save the chosen shader pack", e);
+		}
+	}
+
+	/** The pack row shows the one in use, or with shaders off the one they would come back with. */
+	private static String shown(String[] packs) {
+		String selected = ShaderPacks.selectedName();
+		if (!selected.isEmpty()) return selected;
+		String last = ShaderPacks.lastName();
+		for (String name : packs) {
+			if (name.equals(last)) return last;
+		}
+		return packs[0];
+	}
+
+	private static String[] packs() {
+		List<String> names = new ArrayList<>();
+		try {
+			for (Path path : PackLoader.candidates(Minecraft.getInstance().gameDirectory.toPath())) {
+				names.add(path.getFileName().toString());
+			}
+		} catch (IOException e) {
+			VitrailVk.LOGGER.warn("Cannot list the shader packs", e);
+		}
+		String selected = ShaderPacks.selectedName();
+		if (!selected.isEmpty() && !names.contains(selected)) names.add(selected);
+		return names.isEmpty() ? new String[] {NONE} : names.toArray(new String[0]);
+	}
+
+	private static void openSettings(String name) {
+		Minecraft minecraft = Minecraft.getInstance();
+		ShaderPackScreen list = new ShaderPackScreen(minecraft.screen);
+		list.openSettings(minecraft, name);
+	}
+
+	private static void openFolder() {
+		Path directory = ShaderPacks.directory();
+		try {
+			Files.createDirectories(directory);
+		} catch (IOException e) {
+			VitrailVk.LOGGER.warn("Cannot create {}", directory, e);
+		}
+		Util.getPlatform().openFile(directory.toFile());
+	}
+
+	private static Component status() {
+		String error = PackRenderer.lastError().orElse(null);
+		if (error != null) return Component.translatable("vitrailvk.page.failed").withStyle(ChatFormatting.RED);
+		String selected = ShaderPacks.selectedName();
+		if (PackRenderer.needsRestart(selected)) return Component.translatable("vitrailvk.page.restart").withStyle(ChatFormatting.YELLOW);
+		if (selected.isEmpty()) return Component.translatable("vitrailvk.page.off");
+		return PackRenderer.runningPack().isPresent()
+				? Component.translatable("vitrailvk.page.running").withStyle(ChatFormatting.GREEN)
+				: Component.translatable("vitrailvk.page.pending");
+	}
+
+	private static Component statusInFull() {
+		String error = PackRenderer.lastError().orElse(null);
+		if (error != null) return Component.literal(error);
+		String selected = ShaderPacks.selectedName();
+		if (PackRenderer.needsRestart(selected)) return Component.translatable("vitrailvk.screen.restart");
+		if (selected.isEmpty()) return Component.translatable("vitrailvk.screen.off");
+		return PackRenderer.runningPack().<Component>map(name -> Component.translatable("vitrailvk.screen.running", name))
+				.orElse(Component.translatable("vitrailvk.screen.pending", selected));
+	}
+}

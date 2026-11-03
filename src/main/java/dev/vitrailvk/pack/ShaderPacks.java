@@ -38,6 +38,7 @@ public final class ShaderPacks {
 
 	private static final String CONFIG = "vitrailvk.properties";
 	private static final String KEY = "shaderPack";
+	private static final String LAST_KEY = "lastShaderPack";
 
 	/** Asked for every frame; the file is read once. */
 	private static String selected;
@@ -81,8 +82,14 @@ public final class ShaderPacks {
 	public static void select(String name) throws IOException {
 		Properties properties = config();
 		properties.setProperty(KEY, name);
+		if (!name.isEmpty()) properties.setProperty(LAST_KEY, name);
 		store(properties);
 		selected = name;
+	}
+
+	/** The pack that was on last, for when shaders go back on. */
+	public static String lastName() {
+		return config().getProperty(LAST_KEY, "").trim();
 	}
 
 	public static String profile() {

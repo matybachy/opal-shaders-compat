@@ -2,7 +2,7 @@
 """A clean NeoForge client outside the dev run, for testing the built jar.
 
   scripts/instance.py create NAME          install NeoForge into test-instance/NAME
-  scripts/instance.py install NAME         the freshly built jar, VulkanMod Reforged and the test packs into it
+  scripts/instance.py install NAME         the freshly built jars, VulkanMod Reforged and the test packs into it
   scripts/instance.py run NAME [options]   start it with what is in its mods/ folder, then summarise the run
 
 Options of run:
@@ -15,6 +15,10 @@ Options of run:
   --no-validation  without the Khronos layer
   --no-autotest    just start the game
   --jvm ARG        one more JVM argument, repeatable
+
+Options of install:
+  --renderer gl    without VulkanMod Reforged and Vitrail VK
+  --extra DIR      every jar of test-instance/jars/DIR too, repeatable
 
 Output goes to test-instance/NAME/autotest. The Java is Zulu 21 from JAVA_HOME or the usual place.
 """
@@ -32,7 +36,8 @@ import time
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-NEOFORGE = "21.1.228"
+# The version the instance is created with; Opal and Vectors ask for 21.1.259 or newer.
+NEOFORGE = "21.1.265"
 MINECRAFT = "1.21.1"
 JAVA_HOME = pathlib.Path(os.environ.get("VITRAILVK_JAVA", r"C:\Program Files\Zulu\zulu-21"))
 JAVA = JAVA_HOME / "bin" / ("java.exe" if os.name == "nt" else "java")
@@ -58,16 +63,36 @@ def create(name):
     print("installed in", home)
 
 
-def install(name):
+def neoforge_of(home):
+    """The NeoForge an instance was created with."""
+    found = sorted(path.name for path in (home / "versions").glob("neoforge-*"))
+    return found[-1][len("neoforge-"):] if found else NEOFORGE
+
+
+def newest(directory, pattern):
+    return sorted(directory.glob(pattern), key=lambda path: path.stat().st_mtime)[-1]
+
+
+def install(name, renderer="vulkan", extra=()):
+    """The freshly built jars. renderer "gl" leaves VulkanMod Reforged and Vitrail VK out of the instance."""
     home = instance(name)
     mods = home / "mods"
     mods.mkdir(exist_ok=True)
-    for old in mods.glob("vitrailvk-*.jar"):
-        old.unlink()
-    built = sorted((ROOT / "build" / "libs").glob("vitrailvk-*.jar"), key=lambda path: path.stat().st_mtime)[-1]
+    for pattern in ("vitrailvk-*.jar", "vitrailbridge-*.jar", "VulkanMod-Reforged-*.jar"):
+        for old in mods.glob(pattern):
+            old.unlink()
+    built = newest(ROOT / "bridge" / "build" / "libs", "vitrailbridge-*.jar")
     shutil.copy2(built, mods)
-    for library in (ROOT / "libs").glob("VulkanMod-Reforged-*.jar"):
-        shutil.copy2(library, mods)
+    print("installed", built.name)
+    if renderer == "vulkan":
+        built = newest(ROOT / "build" / "libs", "vitrailvk-*.jar")
+        shutil.copy2(built, mods)
+        for library in (ROOT / "libs").glob("VulkanMod-Reforged-*.jar"):
+            shutil.copy2(library, mods)
+    for directory in extra:
+        for jar in (ROOT / "test-instance" / "jars" / directory).glob("*.jar"):
+            shutil.copy2(jar, mods)
+            print("installed", jar.name)
     packs = home / "shaderpacks"
     packs.mkdir(exist_ok=True)
     for pack in (ROOT / "run" / "shaderpacks").iterdir():
@@ -164,7 +189,8 @@ def fetch_assets(home, vanilla):
 
 def run(name, args):
     home = instance(name)
-    neoforge = json.loads((home / "versions" / f"neoforge-{NEOFORGE}" / f"neoforge-{NEOFORGE}.json").read_text())
+    neoforge_version = neoforge_of(home)
+    neoforge = json.loads((home / "versions" / f"neoforge-{neoforge_version}" / f"neoforge-{neoforge_version}.json").read_text())
     vanilla_file = home / "versions" / MINECRAFT / f"{MINECRAFT}.json"
     vanilla = json.loads(vanilla_file.read_text())
     fetch_missing(home, neoforge)
@@ -182,7 +208,7 @@ def run(name, args):
                 # A later entry replaces the same library of another version, as the launcher does.
                 seen[":".join(entry["name"].split(":")[:2] + entry["name"].split(":")[3:])] = library_path(home, entry)
     # Under the version's own name, which is what ignoreList keeps out of the module layer: the patched game comes from libraries.
-    named = home / "versions" / f"neoforge-{NEOFORGE}" / f"neoforge-{NEOFORGE}.jar"
+    named = home / "versions" / f"neoforge-{neoforge_version}" / f"neoforge-{neoforge_version}.jar"
     if not named.exists():
         shutil.copy2(client, named)
     classpath = list(seen.values()) + [named]
@@ -190,7 +216,7 @@ def run(name, args):
         "${library_directory}": str(home / "libraries"),
         "${classpath_separator}": separator,
         "${classpath}": separator.join(str(p) for p in classpath),
-        "${version_name}": f"neoforge-{NEOFORGE}",
+        "${version_name}": f"neoforge-{neoforge_version}",
         "${natives_directory}": str(home / "natives"),
         "${launcher_name}": "vitrailvk-test",
         "${launcher_version}": "1",
@@ -236,6 +262,7 @@ def run(name, args):
             jvm.append(f"-Dvitrailvk.autotest.script={pathlib.Path(args.script).resolve()}")
     if args.pack is not None:
         jvm.append(f"-Dvitrailvk.pack={args.pack}")
+        jvm.append(f"-Dvitrailbridge.autotest.pack={args.pack}")
     if args.options:
         jvm.append(f"-Dvitrailvk.options={args.options}")
     jvm += args.jvm or []
@@ -276,11 +303,13 @@ def main():
     parser.add_argument("--no-validation", action="store_true")
     parser.add_argument("--no-autotest", action="store_true")
     parser.add_argument("--jvm", action="append")
+    parser.add_argument("--renderer", choices=["vulkan", "gl"], default="vulkan", help="install: without VulkanMod Reforged and Vitrail VK")
+    parser.add_argument("--extra", action="append", default=[], help="install: every jar of test-instance/jars/EXTRA too")
     args = parser.parse_args()
     if args.action == "create":
         create(args.name)
     elif args.action == "install":
-        install(args.name)
+        install(args.name, args.renderer, args.extra)
     else:
         sys.exit(run(args.name, args))
 

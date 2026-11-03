@@ -1,0 +1,16 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.vitrailbridge.mixin",
+  "plugin": "dev.vitrailbridge.mixin.BridgeMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "OpalOnVulkanMixin",
+    "OpalImagesMixin",
+    "OpalImageMixin",
+    "FlywheelShaderPackMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

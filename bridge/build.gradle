@@ -1,0 +1,61 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev'
+}
+
+version = project.bridge_version
+group = project.mod_group_id
+
+base {
+    archivesName = 'vitrailbridge'
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+// Opal and Vectors are not on a public Maven repository. What this mod calls of them is declared in src/stubs,
+// compiled against and left out of the jar; at run time their own classes answer.
+sourceSets.main.java.srcDir 'src/stubs/java'
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly files(rootProject.file("libs/VulkanMod-Reforged-${project.vulkanmod_version}.jar"))
+    compileOnly rootProject.sourceSets.main.output
+}
+
+def resourceProps = [
+        version          : project.bridge_version,
+        vulkanmod_version: project.vulkanmod_version,
+        neo_version_range: project.neo_version_range,
+        minecraft_version_range: project.minecraft_version_range,
+]
+
+processResources {
+    inputs.properties resourceProps
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand resourceProps
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+jar {
+    exclude 'dev/opal/**', 'dev/vector/**'
+    from(rootProject.layout.projectDirectory.file('LICENSE')) { rename { "${it}_vitrailbridge" } }
+    from(rootProject.layout.projectDirectory.file('COPYING')) { rename { "${it}_vitrailbridge" } }
+    from(layout.projectDirectory.file('NOTICE')) { rename { "${it}_vitrailbridge" } }
+}

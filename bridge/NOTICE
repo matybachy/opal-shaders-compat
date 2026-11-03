@@ -1,0 +1,25 @@
+Third-party material in Vitrail Bridge
+======================================
+
+Vitrail Bridge is distributed under the GNU Lesser General Public License version 3 only, in LICENSE
+(with the GNU General Public License version 3 it refers to, in COPYING).
+
+It contains no code of the mods it works with, and ships none of them. It finds them at run time and reaches into
+them with mixins, by the names of their classes and members.
+
+Opal Shaders 1.0.0-alpha.8
+Its metadata gives the license as "UNDECIDED". Not redistributed; nothing of it is copied. src/stubs names the few
+members this mod calls, so that it compiles without the jar, and is left out of the built jar.
+
+Vectors 1.5.3
+Copyright 2026 Vector contributors
+MIT License. Not redistributed. src/stubs names the members this mod calls and is left out of the built jar. The
+ranges of the sliders in gui/VectorsPages.java are the ones its own settings screen gives them.
+
+VulkanMod Reforged, https://github.com/TrulyRin/VulkanMod-Reforged
+GNU Lesser General Public License version 3
+Not redistributed; a run-time dependency when present. gui/ uses its public settings registry.
+
+Flywheel, https://github.com/Engine-Room/Flywheel
+MIT License
+Not redistributed. mixin/FlywheelShaderPackMixin.java answers its question whether a shader pack is in use.

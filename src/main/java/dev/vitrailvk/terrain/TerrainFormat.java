@@ -2,16 +2,25 @@ package dev.vitrailvk.terrain;
 
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
-import dev.vitrailvk.pack.ShaderPacks;
+import net.neoforged.fml.loading.FMLPaths;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Locale;
+import java.util.stream.Stream;
 
 /**
  * VulkanMod Reforged's compressed terrain format with the elements shader packs read appended.
  * <p>
  * VulkanMod fixes the terrain stride when its classes initialise ({@code DrawBuffers.VERTEX_SIZE},
  * {@code POS_OFFSET}) and compares the format by identity in several places, so the extension is
- * decided once, at startup, by whether a shader pack is selected, and is installed as
- * {@code CustomVertexFormat.COMPRESSED_TERRAIN} itself. Switching between "a pack" and "no pack"
- * therefore needs a restart.
+ * decided once and is installed as {@code CustomVertexFormat.COMPRESSED_TERRAIN} itself. That happens
+ * while VulkanMod starts, before this mod is constructed, so nothing of the mod's may be asked here.
+ * It is on whenever there is a pack in {@code shaderpacks/} to turn on, whether one is selected or not:
+ * a pack can then go on and off in the game, at the price of a wider mesh without one. A game started
+ * with an empty folder, or with {@code -Dvitrailvk.compactTerrain=true}, or the test runs that name no
+ * pack, have VulkanMod's own format, and a pack added later needs a restart.
  * <p>
  * Element types are the combinations VulkanMod's {@code GraphicsPipeline} can turn into attribute
  * formats, because its own terrain pipeline is built against this format too.
@@ -19,7 +28,7 @@ import dev.vitrailvk.pack.ShaderPacks;
 public final class TerrainFormat {
 
 	/** Whether the mesh carries the extension this session. Read once. */
-	public static final boolean EXTENDED = selected();
+	public static final boolean EXTENDED = packsAvailable();
 
 	public static final int BASE_STRIDE = 20;
 	public static final int STRIDE = 40;
@@ -33,10 +42,14 @@ public final class TerrainFormat {
 	private TerrainFormat() {
 	}
 
-	private static boolean selected() {
-		try {
-			return !ShaderPacks.selectedName().isEmpty();
-		} catch (RuntimeException e) {
+	private static boolean packsAvailable() {
+		if (Boolean.getBoolean("vitrailvk.compactTerrain")) return false;
+		String forced = System.getProperty("vitrailvk.pack");
+		if (forced != null) return !forced.isBlank();
+		try (Stream<Path> files = Files.list(FMLPaths.GAMEDIR.get().resolve("shaderpacks"))) {
+			return files.anyMatch(path -> Files.isDirectory(path.resolve("shaders"))
+					|| path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".zip"));
+		} catch (IOException | RuntimeException e) {
 			return false;
 		}
 	}
