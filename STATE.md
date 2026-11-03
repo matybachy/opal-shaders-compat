@@ -1,8 +1,8 @@
 # STATE
 
 Hotovo: 1 reference a build, 2 mixiny a runtime, 3 optiony/noisetex/mipmapy/blendy, 4 stíny (terén).
-Aktuální: 5 obloha, entity, ruka, částice, počasí, mraky (včetně entit do stínu).
-Čeká: 6 custom textury a compute, 7 GUI, A Flywheel/Create/Colorwheel, B ostatní mody, C Distant Horizons, release build.
+Aktuální: V PRÁCI: položka 6, první další krok je runtime načtení .csh z TargetPlan.computes(); předání v HANDOFF.txt.
+Čeká: dokončení 6, GUI, Flywheel/Create/Colorwheel (VMR má experimentální backend), ostatní mody, DH a release.
 
 ## Klíčová rozhodnutí
 - VMR jako release jar, bez forku; mixiny do interních tříd (`remap=false`), závislost na přesné verzi.
