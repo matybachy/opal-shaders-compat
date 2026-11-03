@@ -16,7 +16,7 @@ ověřeno proti zdrojům, ne funkční. Poslední skutečný běh je `test_terra
 | 4 Stíny: terén, entity, block entity, `shadowcomp` (grafické), mipmapy | hotovo v kódu |
 | 5 Obloha, entity, ruka, částice, počasí, mraky | hotovo v kódu |
 | 6 Custom textury, image.*, SSBO, compute | hotovo v kódu |
-| 7 GUI výběru packu a nastavení | nezačato |
+| 7 GUI výběru packu a nastavení | hotovo v kódu |
 | A Flywheel, Create, Colorwheel | nezačato |
 | B Ostatní mody včetně Mekanismu | obecná cesta entit a BER existuje, mapování nezačato |
 | C Distant Horizons včetně `dh_*` | nezačato (`dh/DhDepth`, `glsl/DistantVertex` jsou převzaté a nezapojené) |
@@ -41,8 +41,10 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
   úpravy v `PackProgram`, `ShaderProperties` a `TargetPlan` (značené `VitrailVK:`), znovu je pak dopiš ručně.
 - `-Pvalidation=false` vypne validation layers (`tools/vvl`, Khronos nightly, mimo git).
 
-Pack se vybírá v `config/vitrailvk.properties` (`shaderPack`, `profile`, `option.NAME`) nebo přes systémové
-vlastnosti `vitrailvk.pack` a `vitrailvk.options`. GUI zatím není.
+Pack se vybírá ve hře: video nastavení VMR, vlevo dole **Shader packy...** (uloží se do
+`config/vitrailvk.properties`, klíč `shaderPack`). Nastavení packu jsou v `shaderpacks/<pack>.txt`, stejném souboru
+jako u Iris. Systémové vlastnosti `vitrailvk.pack`, `vitrailvk.profile` a `vitrailvk.options` (autotest) mají přednost,
+dokud se pack nevybere ve hře.
 
 ## Rozhodnutí
 
@@ -81,7 +83,16 @@ vlastnosti `vitrailvk.pack` a `vitrailvk.options`. GUI zatím není.
   Výjimka: pack bez programu pro terén (např. jen color grade) dostane obraz VMR do targetu (`seedFromGame`).
 - **Identita vrcholu** (`DrawIds`, `BufferBuilderMixin`, `MeshDataMixin`): dávka míchá vlastníky a kreslí se později,
   proto se ID zapisuje u každého vrcholu; smíšené dávky se dělí na běhy v původním pořadí (`MixedMesh`).
-- **Optiony:** `config/vitrailvk.properties`, přednost mají systémové properties.
+- **GUI** (`screen/ShaderPackScreen`, `screen/PackSettingsScreen`, `VOptionScreenMixin`): vlastní obrazovky na vanilla
+  widgetech, Vitrailův `screen/` je napsaný proti 26.x. Model stránek je převzaté `pack/menu` (`PackMenu`, `MenuValues`)
+  a `settings/PackSession`, soubor `SettingsFile`. Vstup je mixin do `VOptionScreen.addButtonsWithSearchBar`:
+  `ModSettingsRegistry` umí jen stránky voleb, ne tlačítko a vnořené stránky packu. Levý klik další hodnota, pravý
+  předchozí, shift výchozí; Zrušit odejde, Použít zapíše a načte znovu, Hotovo obojí, jako u Iris.
+- **Pád packu:** výjimka při načítání i při kreslení vede na `report()`: pack se vypne, kreslí čistý VMR, toast, celý text
+  chyby včetně diagnostiky shaderc na obrazovce Shader packy a tlačítko Kopírovat chybu. `PackRenderer.reload()` po
+  změně přestaví i mesh (`allChanged`), protože `block.properties` je v něm, jako `Iris.reload`.
+- **Restart:** jen zapnutí z „bez packu“ při startu. Vypnutí a přepnutí jde za běhu: VMR čte prvních 20 B rozšířeného
+  vrcholu. Vždy rozšířený mesh by stál dvojnásobek paměti terénu i hráče, který pack nepoužívá.
 - **Device features** (`DeviceManagerMixin`): `independentBlend`, `geometryShader`,
   `fragmentStoresAndAtomics`, storage image formáty a další, kde je GPU má.
 - **Mipmapy:** `colortexNMipmapEnabled` se generují blitem před passem, který je žádá, na straně, kterou
@@ -153,6 +164,7 @@ statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žád
 | `BlockEntityRenderDispatcherMixin`, `ItemRendererMixin`, `ItemInHandRendererMixin`, `ParticleEngineMixin` | `render`, `render`, `renderArmWithItem`, `render` (5 argumentů) | ano |
 | `GameRendererAccessor`, `LevelRendererAccessor`, `TextureAtlasAccessor`, `BiomesMixin` | `getFov`, `bobHurt`, `bobView`, `renderHand`, `renderEntity`, statické `Biomes.register` | ano |
 | `VboMixin`, `VboAccessor` | `VBO.drawWithShader(..., ShaderInstance)`, pole `VBO` | ne |
+| `VOptionScreenMixin` | `VOptionScreen.addButtonsWithSearchBar`, pole `buttons` | ne |
 | `VulkanImageMixin` | statické `VulkanImage.transitionImageLayout(MemoryStack, VkCommandBuffer, VulkanImage, int)` | ne |
 | `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor` | ne |
 | `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | terén VMR | ne |
@@ -186,18 +198,16 @@ Při ověření opraveno: stíny entit řadí podle typu (méně dávek), berou 
 - Do stínu jdou jen sekce zkompilované grafem kamery, VMR jiné nemá.
 - `centerDepth` čte depth přímo, bez vyhlazení. `normals`/`specular` zatím neutrální, atlasy PBR se nenačítají.
 - Raw textury: packed, BGR, integer a rectangle zatím čtou černou. VBO s `transientGeometry` kreslí VMR.
-- Zapnutí/vypnutí packu vyžaduje restart. Shadow program čtoucí stejnou mapu, kterou zapisuje, dostane `shadowtex1`.
+- Shadow program čtoucí stejnou mapu, kterou zapisuje, dostane `shadowtex1`.
 - `Vk.storageUsage`: pack, který váže jako `colorimg` target ve formátu bez storage podpory, selže při zápisu deskriptoru.
 
 ## Co zbývá
 
-1. **GUI.** `dev/vitrail/pack/menu` je převzaté, `ShaderPacks.select`/`saveOptions` a `PackRenderer.reload` existují.
-   Chybí vstup ve video nastavení, obrazovky a rozlišení změny, která vyžaduje restart (jiný stride).
-2. **Flywheel, Create, Colorwheel.** VMR 0618965 má `compat/sable/flywheel` (`VulkanFlywheelBackend`,
+1. **Flywheel, Create, Colorwheel.** VMR 0618965 má `compat/sable/flywheel` (`VulkanFlywheelBackend`,
    `VulkanFlywheelBootstrap`), experimentální za vlastností `vulkanmod.compat.sable.flywheel.experimental`. To dokládá
    cestu, ne napojení na pack. Zdroje těch tří modů v `refs/` nejsou. Záchrana: Flywheel vypnout, Create přes vanilla BER.
-3. **Ostatní mody.** Mapování modovaných vrstev (Mekanism a další) na programy, případně minimální shim Iris API.
-4. **Distant Horizons.** Rozhraní DH, geometrie, matice, hloubka, `dh_terrain`, `dh_water`, `dh_shadow`, bez forku.
+2. **Ostatní mody.** Mapování modovaných vrstev (Mekanism a další) na programy, případně minimální shim Iris API.
+3. **Distant Horizons.** Rozhraní DH, geometrie, matice, hloubka, `dh_terrain`, `dh_water`, `dh_shadow`, bez forku.
 
 ## Reference: Iris-Vulkan-Port
 

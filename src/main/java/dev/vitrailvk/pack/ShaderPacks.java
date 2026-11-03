@@ -7,6 +7,7 @@ import dev.vitrail.pack.load.PackReport;
 import dev.vitrail.pack.option.OptionValue;
 import dev.vitrail.pack.option.PackOption;
 import dev.vitrail.pack.program.ProgramSet;
+import dev.vitrail.settings.SettingsFile;
 import dev.vitrailvk.VitrailVk;
 
 import java.io.IOException;
@@ -28,17 +29,19 @@ import java.util.stream.Collectors;
 /**
  * Which pack is selected, with which settings, and reading it with the loader taken from Vitrail.
  * <p>
- * {@code config/vitrailvk.properties}: {@code shaderPack=<name>}, {@code profile=<name>} and one
- * {@code option.<NAME>=<value>} per setting changed from the pack's default. The system properties
- * {@code vitrailvk.pack} and {@code vitrailvk.options} ({@code A=b,C=d}) override them (the autotest
- * sets them). An empty pack name means no pack.
+ * {@code config/vitrailvk.properties}: {@code shaderPack=<name>}. Settings live in
+ * {@code shaderpacks/<name>.txt}, the file Iris reads, one per pack. The system properties
+ * {@code vitrailvk.pack}, {@code vitrailvk.profile} and {@code vitrailvk.options} ({@code A=b,C=d}) go over
+ * them (the autotest sets them) until a pack is chosen in the game. An empty pack name means no pack.
  */
 public final class ShaderPacks {
 
 	private static final String CONFIG = "vitrailvk.properties";
 	private static final String KEY = "shaderPack";
-	private static final String PROFILE = "profile";
-	private static final String OPTION = "option.";
+
+	/** Asked for every frame; the file is read once. */
+	private static String selected;
+	private static String missingNamed;
 
 	private ShaderPacks() {
 	}
@@ -68,28 +71,34 @@ public final class ShaderPacks {
 	}
 
 	public static String selectedName() {
-		String forced = System.getProperty("vitrailvk.pack");
-		if (forced != null) return forced.trim();
-		return config().getProperty(KEY, "").trim();
+		if (selected == null) {
+			String forced = System.getProperty("vitrailvk.pack");
+			selected = forced != null ? forced.trim() : config().getProperty(KEY, "").trim();
+		}
+		return selected;
 	}
 
 	public static void select(String name) throws IOException {
 		Properties properties = config();
 		properties.setProperty(KEY, name);
 		store(properties);
+		selected = name;
 	}
 
 	public static String profile() {
-		return config().getProperty(PROFILE, "").trim();
+		return System.getProperty("vitrailvk.profile", "").trim();
 	}
 
-	/** The settings changed from the pack's defaults. */
+	/** The settings changed from the selected pack's defaults. */
 	public static Map<String, OptionValue> options() {
 		Map<String, OptionValue> options = new LinkedHashMap<>();
-		Properties properties = config();
-		for (String key : properties.stringPropertyNames()) {
-			if (key.startsWith(OPTION)) {
-				options.put(key.substring(OPTION.length()), OptionValue.parse(properties.getProperty(key)));
+		String name = selectedName();
+		if (!name.isEmpty()) {
+			Path file = SettingsFile.of(Vitrail.platform().gameDirectory(), name);
+			try {
+				SettingsFile.read(file).values().forEach((option, value) -> options.put(option, OptionValue.parse(value)));
+			} catch (IOException e) {
+				VitrailVk.LOGGER.warn("Cannot read {}, the pack draws with its own defaults", file, e);
 			}
 		}
 		String forced = System.getProperty("vitrailvk.options", "");
@@ -102,21 +111,14 @@ public final class ShaderPacks {
 		return options;
 	}
 
-	public static void saveOptions(String profile, Map<String, String> options) throws IOException {
-		Properties properties = config();
-		properties.stringPropertyNames().stream().filter(k -> k.startsWith(OPTION)).forEach(properties::remove);
-		properties.setProperty(PROFILE, profile);
-		options.forEach((name, value) -> properties.setProperty(OPTION + name, value));
-		store(properties);
-	}
-
 	/** The selected pack on disk, if one is selected and present. */
 	public static Optional<Path> selectedPath() {
 		String name = selectedName();
 		if (name.isEmpty()) return Optional.empty();
 		Path path = directory().resolve(name);
 		if (!Files.exists(path)) {
-			VitrailVk.LOGGER.warn("Selected shader pack {} is not in {}", name, directory());
+			if (!name.equals(missingNamed)) VitrailVk.LOGGER.warn("Selected shader pack {} is not in {}", name, directory());
+			missingNamed = name;
 			return Optional.empty();
 		}
 		return Optional.of(path);

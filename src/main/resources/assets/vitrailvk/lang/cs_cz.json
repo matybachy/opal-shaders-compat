@@ -1,0 +1,18 @@
+{
+  "vitrailvk.screen.packs": "Shader packy...",
+  "vitrailvk.screen.settings": "Nastavení packu...",
+  "vitrailvk.screen.folder": "Otevřít složku",
+  "vitrailvk.screen.copy": "Kopírovat chybu",
+  "vitrailvk.screen.apply": "Použít",
+  "vitrailvk.screen.reset": "Výchozí",
+  "vitrailvk.screen.none": "Vypnuto (jen VulkanMod Reforged)",
+  "vitrailvk.screen.off": "Žádný shader pack: kreslí jen VulkanMod Reforged.",
+  "vitrailvk.screen.running": "Běží: %s",
+  "vitrailvk.screen.pending": "%s se načte s dalším snímkem světa.",
+  "vitrailvk.screen.restart": "Je potřeba restart: hra se spustila bez packu a terén nese data pro packy, jen když je pack vybraný při startu. Volba je uložená.",
+  "vitrailvk.screen.profile": "Profil",
+  "vitrailvk.screen.profile_custom": "Vlastní",
+  "vitrailvk.screen.pending_changes": "Nepoužité změny: %s",
+  "vitrailvk.toast.failed": "Shader pack selhal",
+  "vitrailvk.toast.detail": "%s je vypnutý, podrobnosti v Shader packy."
+}

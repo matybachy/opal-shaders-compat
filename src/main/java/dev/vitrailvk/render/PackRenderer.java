@@ -47,12 +47,14 @@ import dev.vitrailvk.vk.PackImage;
 import dev.vitrailvk.vk.Std140Writer;
 import dev.vitrailvk.vk.Vk;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ScreenEffectRenderer;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
@@ -155,6 +157,8 @@ public final class PackRenderer implements AutoCloseable {
 	private static boolean solidHandIssued;
 	private static boolean handsHandled;
 	private static boolean screenEffectPostponed;
+	private static boolean remeshOnLoad;
+	private static String lastError;
 	private static final Families.SkyOrder skyOrder = new Families.SkyOrder();
 	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
 	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
@@ -581,11 +585,41 @@ public final class PackRenderer implements AutoCloseable {
 	 */
 	public static void reload() {
 		failedKey = null;
+		lastError = null;
+		remeshOnLoad = true;
 		if (active != null) failedDuringFrame = true;
+	}
+
+	/** Why the last pack is not running, for the screen; the log has the rest. */
+	public static Optional<String> lastError() {
+		return Optional.ofNullable(lastError);
+	}
+
+	public static Optional<String> runningPack() {
+		return active == null || failedDuringFrame ? Optional.empty() : Optional.of(active.packName);
+	}
+
+	/** Whether this pack can only load after a restart: see {@link TerrainFormat}. */
+	public static boolean needsRestart(String pack) {
+		return !pack.isEmpty() && !TerrainFormat.EXTENDED;
+	}
+
+	/** The pack is gone and VulkanMod Reforged draws on its own; what is left to do is to say so. */
+	private static void report(String pack, Throwable e) {
+		StringBuilder text = new StringBuilder(pack).append(": ");
+		for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+			if (cause != e) text.append("\n");
+			text.append(cause.getMessage() != null ? cause.getMessage() : cause.toString());
+		}
+		lastError = text.toString();
+		Minecraft mc = Minecraft.getInstance();
+		mc.tell(() -> SystemToast.addOrUpdate(mc.getToasts(), SystemToast.SystemToastId.PACK_LOAD_FAILURE,
+				Component.translatable("vitrailvk.toast.failed"), Component.translatable("vitrailvk.toast.detail", pack)));
 	}
 
 	private static void fail(RuntimeException e) {
 		VitrailVk.LOGGER.error("Shader pack {} failed while drawing; turning it off", active.packName, e);
+		report(active.packName, e);
 		failedKey = activeKey;
 		// Recorded commands still reference this pack until VulkanMod submits the frame.
 		failedDuringFrame = true;
@@ -603,7 +637,9 @@ public final class PackRenderer implements AutoCloseable {
 	private static void ensureLoaded() {
 		ClientLevel level = Minecraft.getInstance().level;
 		Optional<Path> pack = ShaderPacks.selectedPath();
-		if (level == null || pack.isEmpty()) {
+		// Without the extended mesh (TerrainFormat) a pack would run with its world drawn by VulkanMod, which
+		// looks like a broken pack. Say what it takes instead, once.
+		if (level == null || pack.isEmpty() || needsRestart(ShaderPacks.selectedName())) {
 			if (active != null) shutDown();
 			return;
 		}
@@ -614,9 +650,17 @@ public final class PackRenderer implements AutoCloseable {
 		try {
 			active = new PackRenderer(pack.get(), dimension);
 			activeKey = key;
-		} catch (Exception e) {
+			lastError = null;
+			// What block.properties gives a block is in the mesh; a new world's first mesh comes after this.
+			if (remeshOnLoad) {
+				remeshOnLoad = false;
+				Minecraft mc = Minecraft.getInstance();
+				mc.tell(() -> mc.levelRenderer.allChanged());
+			}
+		} catch (Exception | LinkageError | OutOfMemoryError e) {
 			VitrailVk.LOGGER.error("Shader pack {} could not be loaded for {}; drawing without it",
 					pack.get().getFileName(), dimension, e);
+			report(pack.get().getFileName().toString(), e);
 			failedKey = key;
 		}
 	}
