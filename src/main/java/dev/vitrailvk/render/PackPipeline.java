@@ -90,12 +90,12 @@ final class PackPipeline implements AutoCloseable {
 		}
 	}
 
-	private record Key(long renderPass, Style style) {
+	private record Key(long renderPass, Style style, VertexFormat format, boolean derived) {
 	}
 
 	/**
-	 * The second vertex binding of a {@link Kind#MESH} pipeline: one record per vertex, advanced per
-	 * vertex, holding what a vertex input the bound format has not got reads.
+	 * The second vertex binding of a {@link Kind#MESH} pipeline: one record per draw, advanced per
+	 * instance, holding what a vertex input the bound format has not got reads.
 	 */
 	static final class Constants {
 		static final int STRIDE = 112;
@@ -112,6 +112,25 @@ final class PackPipeline implements AutoCloseable {
 		private Constants() {
 		}
 	}
+
+	/**
+	 * The third vertex binding of a {@link Kind#MESH} pipeline where a program reads these and the
+	 * vertices are at hand to work them out from: per vertex, because a batch mixes owners.
+	 */
+	static final class Derived {
+		static final int STRIDE = 28;
+		static final int IDENTIFIERS = 0;
+		static final int MID_TEX = 16;
+		static final int TANGENT = 24;
+
+		private Derived() {
+		}
+	}
+
+	private static final Map<String, int[]> DERIVED_ATTRIBUTES = Map.of(
+			"EntityIds", new int[] {VK_FORMAT_R32G32B32A32_UINT, Derived.IDENTIFIERS},
+			"MidTexCoord", new int[] {VK_FORMAT_R32G32_SFLOAT, Derived.MID_TEX},
+			"Tangent", new int[] {VK_FORMAT_R8G8B8A8_SNORM, Derived.TANGENT});
 
 	/** Input name to {format, offset} in {@link Constants}. */
 	private static final Map<String, int[]> CONSTANT_ATTRIBUTES = Map.of(
@@ -142,7 +161,7 @@ final class PackPipeline implements AutoCloseable {
 	final Kind kind;
 	final ProgramTranslator.TranslatedProgram program;
 	final List<Slot> slots;
-	private final VertexFormat meshFormat;
+	private final boolean readsDerived;
 	private final Map<ProgramStage, Long> modules = new LinkedHashMap<>();
 	private final Map<String, Integer> vertexInputs = new HashMap<>();
 	private final long setLayout;
@@ -150,12 +169,11 @@ final class PackPipeline implements AutoCloseable {
 	private final Map<Key, Long> pipelines = new HashMap<>();
 	private long computePipeline;
 
-	PackPipeline(String name, ProgramTranslator.TranslatedProgram program, SpirvCompiler compiler, Kind kind,
-			VertexFormat meshFormat) {
+	PackPipeline(String name, ProgramTranslator.TranslatedProgram program, SpirvCompiler compiler, Kind kind) {
 		this.name = name;
 		this.kind = kind;
 		this.program = program;
-		this.meshFormat = meshFormat;
+		boolean derived = false;
 
 		Map<String, Slot> byName = new LinkedHashMap<>();
 		if (kind == Kind.COMPUTE) {
@@ -191,12 +209,22 @@ final class PackPipeline implements AutoCloseable {
 			link(geometry != null ? geometry : vertex, fragment);
 
 			vertex.inputs().forEach((inputName, entry) -> this.vertexInputs.put(inputName, entry.location()));
+			for (String input : DERIVED_ATTRIBUTES.keySet()) {
+				SpirvModule.Interface entry = vertex.inputs().get(input);
+				derived |= entry != null && entry.read();
+			}
 			this.modules.put(ProgramStage.VERTEX, module(vertex.code()));
 			if (geometry != null) this.modules.put(ProgramStage.GEOMETRY, module(geometry.code()));
 			this.modules.put(ProgramStage.FRAGMENT, module(fragment.code()));
 		}
+		this.readsDerived = derived;
 		this.setLayout = createSetLayout();
 		this.layout = createLayout();
+	}
+
+	/** Whether this program's vertex stage reads anything {@link Derived} holds. */
+	boolean readsDerived() {
+		return this.readsDerived;
 	}
 
 	private void renumber(SpirvModule module) {
@@ -309,10 +337,19 @@ final class PackPipeline implements AutoCloseable {
 
 	/** The pipeline for a render pass with {@code attachments} colour attachments. */
 	long pipeline(long renderPass, int attachments, Style style) {
-		return this.pipelines.computeIfAbsent(new Key(renderPass, style), key -> create(renderPass, attachments, style));
+		return pipeline(renderPass, attachments, style, null, false);
 	}
 
-	private long create(long renderPass, int attachments, Style style) {
+	/**
+	 * @param format  the vertex format of a {@link Kind#MESH} draw
+	 * @param derived whether the draw binds a {@link Derived} stream
+	 */
+	long pipeline(long renderPass, int attachments, Style style, VertexFormat format, boolean derived) {
+		return this.pipelines.computeIfAbsent(new Key(renderPass, style, format, derived),
+				key -> create(renderPass, attachments, style, format, derived));
+	}
+
+	private long create(long renderPass, int attachments, Style style, VertexFormat format, boolean derived) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(this.modules.size(), stack);
 			int stageIndex = 0;
@@ -339,13 +376,16 @@ final class PackPipeline implements AutoCloseable {
 					});
 				}
 				case MESH -> {
-					stride = this.meshFormat.getVertexSize();
-					List<String> names = this.meshFormat.getElementAttributeNames();
+					stride = format.getVertexSize();
+					List<String> names = format.getElementAttributeNames();
 					this.vertexInputs.forEach((input, location) -> {
 						int index = names.indexOf(input);
+						int[] fromDerived = derived ? DERIVED_ATTRIBUTES.get(input) : null;
 						if (index >= 0) {
-							VertexFormatElement element = this.meshFormat.getElements().get(index);
-							attributes.add(new int[] {location, 0, elementFormat(element), this.meshFormat.getOffset(element)});
+							VertexFormatElement element = format.getElements().get(index);
+							attributes.add(new int[] {location, 0, elementFormat(element), format.getOffset(element)});
+						} else if (fromDerived != null) {
+							attributes.add(new int[] {location, 2, fromDerived[0], fromDerived[1]});
 						} else {
 							int[] constant = CONSTANT_ATTRIBUTES.get(input);
 							if (constant == null) {
@@ -364,9 +404,11 @@ final class PackPipeline implements AutoCloseable {
 				}
 			}
 			boolean constants = this.kind == Kind.MESH;
-			VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(constants ? 2 : 1, stack);
+			VkVertexInputBindingDescription.Buffer binding =
+					VkVertexInputBindingDescription.calloc(constants ? derived ? 3 : 2 : 1, stack);
 			binding.get(0).binding(0).stride(stride).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
-			if (constants) binding.get(1).binding(1).stride(Constants.STRIDE).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
+			if (constants) binding.get(1).binding(1).stride(Constants.STRIDE).inputRate(VK_VERTEX_INPUT_RATE_INSTANCE);
+			if (constants && derived) binding.get(2).binding(2).stride(Derived.STRIDE).inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
 			VkVertexInputAttributeDescription.Buffer attributeInfo = VkVertexInputAttributeDescription.calloc(attributes.size(), stack);
 			for (int i = 0; i < attributes.size(); i++) {
 				int[] attribute = attributes.get(i);

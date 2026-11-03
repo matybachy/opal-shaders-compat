@@ -32,11 +32,15 @@ final class TextureImages implements AutoCloseable {
 	private final Map<PackTexture, PackImage> images = new HashMap<>();
 	private final Map<String, PackImage> volumes = new HashMap<>();
 	private final PackImage black;
+	private final PackImage blackLine;
+	private final PackImage blackVolume;
 
 	// TODO-VERIFY: verify pack textures, atlas rewrites, 1D lookup sampling and resource reloads in game.
 	TextureImages(OpenedPack pack) throws IOException {
 		this.declared = PackTextures.read(pack.properties(), pack.settings().globalDefines(pack.options()), pack.source());
 		this.black = upload(2, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, new byte[4], false, true);
+		this.blackLine = upload(1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, new byte[4], false, true);
+		this.blackVolume = upload(3, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, new byte[4], false, true);
 		try {
 			Map<String, VolumeAtlas> atlases = this.declared.volumes();
 			for (PackTexture texture : this.declared.supplied()) {
@@ -99,6 +103,15 @@ final class TextureImages implements AutoCloseable {
 		return image;
 	}
 
+	/** A stand-in of the right shape: binding a 2D view to a {@code sampler3D} is undefined, not merely wrong. */
+	PackImage blank(int dimensions) {
+		return switch (dimensions) {
+			case 1 -> this.blackLine;
+			case 3 -> this.blackVolume;
+			default -> this.black;
+		};
+	}
+
 	VulkanImage resolve(String program, String sampler) {
 		PackImage volume = this.volumes.get(sampler);
 		if (volume != null) return volume;
@@ -119,5 +132,7 @@ final class TextureImages implements AutoCloseable {
 		this.images.clear();
 		this.volumes.clear();
 		this.black.free();
+		this.blackLine.free();
+		this.blackVolume.free();
 	}
 }

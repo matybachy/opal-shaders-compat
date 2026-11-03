@@ -1,8 +1,10 @@
 package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.model.AlphaTest;
+import dev.vitrail.pack.model.RenderStage;
 
 import java.util.List;
 
@@ -24,12 +26,52 @@ public final class Families {
 	record Piece(String program, AlphaTest alpha, VertexInputs inputs, List<String> bound) {
 	}
 
+	/** Which of the sky's buffers is being drawn: only the order the game draws them in says. */
+	static final class SkyOrder {
+		private int textured;
+		private int plainAfterTextured;
+
+		void reset() {
+			this.textured = 0;
+			this.plainAfterTextured = 0;
+		}
+	}
+
 	private Families() {
+	}
+
+	/** What {@code renderStage} reads during this draw. */
+	static RenderStage stage(String shader, VertexFormat format, Phase phase, SkyOrder sky) {
+		return switch (phase) {
+			case SKY -> {
+				if (shader.equals("position_tex_color")) yield RenderStage.CUSTOM_SKY;
+				if (shader.equals("position_color")) yield RenderStage.SUNSET;
+				if (format.contains(VertexFormatElement.UV0)) yield sky.textured++ == 0 ? RenderStage.SUN : RenderStage.MOON;
+				if (sky.textured == 0) yield RenderStage.SKY;
+				yield sky.plainAfterTextured++ == 0 ? RenderStage.STARS : RenderStage.VOID;
+			}
+			case BLOCK_ENTITIES -> RenderStage.BLOCK_ENTITIES;
+			case HAND -> HandPass.opaque() ? RenderStage.HAND_SOLID : RenderStage.HAND_TRANSLUCENT;
+			case PARTICLES -> RenderStage.PARTICLES;
+			case WEATHER -> RenderStage.RAIN_SNOW;
+			case CLOUDS -> RenderStage.CLOUDS;
+			case SHADOW -> RenderStage.NONE;
+			case LEVEL -> {
+				if (shader.startsWith("rendertype_lines")) yield RenderStage.OUTLINE;
+				if (shader.equals("rendertype_crumbling")) yield RenderStage.DESTROY;
+				if (shader.equals("position_tex")) yield RenderStage.WORLD_BORDER;
+				if (shader.equals("position_color") || shader.equals("position")) yield RenderStage.DEBUG;
+				yield RenderStage.ENTITIES;
+			}
+		};
 	}
 
 	/** @param blending whether the game has blending on, which tells a hand's or a particle's translucent half */
 	static Piece resolve(String shader, VertexFormat format, Phase phase, boolean blending) {
 		List<String> names = format.getElementAttributeNames();
+		// The glow's silhouette belongs in the game's outline target, which it composes after the final
+		// pass: VulkanMod draws it there, as it does without a pack.
+		if (shader.equals("rendertype_outline")) return null;
 		if (phase == Phase.SHADOW) {
 			return shadow(shader, names);
 		}
@@ -52,9 +94,9 @@ public final class Families {
 			return new Piece(program, AlphaTest.NON_ZERO, VertexInputs.GLYPH, names);
 		}
 		if (phase == Phase.HAND) {
-			return mesh(HandPass.opaque() ? "gbuffers_hand" : "gbuffers_hand_water",
-					AlphaTest.ONE_TENTH);
-		}		if (shader.equals("particle")) {
+			return mesh(HandPass.opaque() ? "gbuffers_hand" : "gbuffers_hand_water", AlphaTest.ONE_TENTH);
+		}
+		if (shader.equals("particle")) {
 			if (phase == Phase.WEATHER) {
 				return new Piece("gbuffers_weather", AlphaTest.ONE_TENTH, VertexInputs.PARTICLE, VertexInputs.PARTICLE.elements());
 			}
@@ -88,7 +130,6 @@ public final class Families {
 	private static Piece world(String shader, Phase phase, boolean blending) {
 		boolean translucent = shader.contains("translucent") || blending;
 		String program = switch (phase) {
-			case HAND -> translucent ? "gbuffers_hand_water" : "gbuffers_hand";
 			case BLOCK_ENTITIES -> translucent ? "gbuffers_block_translucent" : "gbuffers_block";
 			default -> translucent ? "gbuffers_entities_translucent" : "gbuffers_entities";
 		};
@@ -99,7 +140,8 @@ public final class Families {
 		if (shader.contains("glint")) {
 			return null; // Iris draws no glint into the map.
 		}
-		if (shader.equals("particle") || shader.startsWith("rendertype_lines")) {
+		// Iris casts no light beam either (mixin/shadows/MixinBeaconRenderer).
+		if (shader.equals("particle") || shader.startsWith("rendertype_lines") || shader.equals("rendertype_beacon_beam")) {
 			return null;
 		}
 		if (shader.startsWith("rendertype_text")) {

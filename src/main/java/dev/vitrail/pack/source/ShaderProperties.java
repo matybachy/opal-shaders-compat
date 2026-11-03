@@ -1611,15 +1611,6 @@ public final class ShaderProperties {
 		return directives;
 	}
 
-	/**
-	 * The size a pack asks a colour target to be, by the name it wrote, raw, the last live line
-	 * for a name winning. The two tokens are often settings rather than numbers, so reading them
-	 * needs {@link TargetSize} and the resolved settings.
-	 * <p>
-	 * Under the conditionals, and this family is where a flat read costs the most: Photon writes
-	 * the size of two targets four times in the four arms of one setting, so a flat read hands
-	 * every choice the size of the last arm.
-	 */
 	// VitrailVK: preserve live scale directives for the Vulkan fullscreen viewport.
 	public Map<String, String> viewportScales(Map<String, String> defines) {
 		Map<String, String> scales = new LinkedHashMap<>();
@@ -1629,6 +1620,15 @@ public final class ShaderProperties {
 		return scales;
 	}
 
+	/**
+	 * The size a pack asks a colour target to be, by the name it wrote, raw, the last live line
+	 * for a name winning. The two tokens are often settings rather than numbers, so reading them
+	 * needs {@link TargetSize} and the resolved settings.
+	 * <p>
+	 * Under the conditionals, and this family is where a flat read costs the most: Photon writes
+	 * the size of two targets four times in the four arms of one setting, so a flat read hands
+	 * every choice the size of the last arm.
+	 */
 	public Map<String, String> sizeBuffers(Map<String, String> defines) {
 		Map<String, String> sizes = new LinkedHashMap<>();
 		for (Matcher line : live(SIZE_BUFFER, defines)) {

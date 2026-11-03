@@ -5,6 +5,7 @@ import dev.vitrailvk.render.Families;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -29,7 +30,6 @@ public abstract class GameRendererMixin {
 		PackRenderer.afterLevel();
 	}
 
-	// TODO-VERIFY: confirm hand draw and deferred ordering during a live frame.
 	@WrapMethod(method = "renderItemInHand")
 	private void vitrailvk$handPhase(Camera camera, float tick, Matrix4f projection, Operation<Void> original) {
 		PackRenderer.pushPhase(Families.Phase.HAND);
@@ -39,10 +39,18 @@ public abstract class GameRendererMixin {
 			PackRenderer.popPhase();
 		}
 	}
-	// TODO-VERIFY: suppress only vanilla's duplicate hands, keeping screen effects, when both pack passes ran.
+
+	/** The two pack passes have drawn the hands already. */
 	@WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
 			target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;Lnet/minecraft/client/player/LocalPlayer;I)V"))
 	private void vitrailvk$skipVanillaHands(ItemInHandRenderer renderer, float tick, PoseStack poses,
 			MultiBufferSource.BufferSource buffers, LocalPlayer player, int light, Operation<Void> original) {
 		if (!PackRenderer.handsHandled()) original.call(renderer, tick, poses, buffers, player, light);
-	}}
+	}
+
+	@WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
+			target = "Lnet/minecraft/client/renderer/ScreenEffectRenderer;renderScreenEffect(Lnet/minecraft/client/Minecraft;Lcom/mojang/blaze3d/vertex/PoseStack;)V"))
+	private void vitrailvk$screenEffectAfterFinal(Minecraft minecraft, PoseStack poses, Operation<Void> original) {
+		if (!PackRenderer.postponeScreenEffect()) original.call(minecraft, poses);
+	}
+}

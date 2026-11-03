@@ -53,6 +53,11 @@ public final class HostBuffer implements AutoCloseable {
 		this.head = 0;
 	}
 
+	public boolean fits(int bytes) {
+		long offset = (this.head + this.alignment - 1) / this.alignment * this.alignment;
+		return offset + bytes <= this.size;
+	}
+
 	/** Space for {@code bytes}, aligned; returns the offset into the buffer. */
 	public long allocate(int bytes) {
 		long offset = (this.head + this.alignment - 1) / this.alignment * this.alignment;

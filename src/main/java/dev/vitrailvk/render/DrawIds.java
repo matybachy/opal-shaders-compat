@@ -36,6 +36,10 @@ public record DrawIds(int entity, int blockEntity, int item, Kind kind) {
 		return new DrawIds(0, BlockStateIds.id(state), -1, Kind.BLOCK_ENTITY);
 	}
 
+	static DrawIds flame() {
+		return new DrawIds(PackNameIds.flame(), -1, -1, Kind.ENTITY);
+	}
+
 	DrawIds withItem(ItemStack stack) {
 		if (stack.isEmpty()) return this;
 		// Iris identifies block items by block-state ID and marks the block-entity lane as one.
@@ -47,11 +51,11 @@ public record DrawIds(int entity, int blockEntity, int item, Kind kind) {
 				PackNameIds.item(BuiltInRegistries.ITEM.getKey(stack.getItem())), this.kind);
 	}
 
-	/** The shader sees Iris's unsigned-short lanes, widened to the pipeline's unsigned integers. */
+	/** The lanes are 32 bits here, so the -1 of an unmapped name reaches {@code int(EntityIds[n])} as -1, as in Iris. */
 	void put(ByteBuffer buffer, int offset) {
-		buffer.putInt(offset, this.entity & 0xffff);
-		buffer.putInt(offset + 4, this.blockEntity & 0xffff);
-		buffer.putInt(offset + 8, this.item & 0xffff);
+		buffer.putInt(offset, this.entity);
+		buffer.putInt(offset + 4, this.blockEntity);
+		buffer.putInt(offset + 8, this.item);
 		buffer.putInt(offset + 12, 0);
 	}
 }

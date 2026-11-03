@@ -8,21 +8,25 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(value = BufferUploader.class, priority = 1200)
+/**
+ * Immediate meshes. Both run ahead of VulkanMod, whose own hook on {@code draw} carries {@code order =
+ * 2000}: injectors at HEAD run in the order they are applied, lower {@code order} first, and among equal
+ * orders the lower priority first.
+ */
+@Mixin(BufferUploader.class)
 public abstract class BufferUploaderMixin {
-	// TODO-VERIFY: confirm priority and ownership relative to VulkanMod's immediate upload at runtime.
+
 	@Inject(method = "_drawWithShader", at = @At("HEAD"), cancellable = true)
 	private static void vitrailvk$drawWithShader(MeshData mesh, CallbackInfo ci) {
-		if (PackRenderer.drawImmediate(mesh)) {
+		if (PackRenderer.drawImmediate(mesh, false)) {
 			mesh.close();
 			ci.cancel();
 		}
 	}
 
-	// TODO-VERIFY: VulkanMod cancels draw at its own HEAD; confirm this higher-priority hook runs first.
 	@Inject(method = "draw", at = @At("HEAD"), cancellable = true)
 	private static void vitrailvk$draw(MeshData mesh, CallbackInfo ci) {
-		if (PackRenderer.drawImmediate(mesh)) {
+		if (PackRenderer.drawImmediate(mesh, true)) {
 			mesh.close();
 			ci.cancel();
 		}

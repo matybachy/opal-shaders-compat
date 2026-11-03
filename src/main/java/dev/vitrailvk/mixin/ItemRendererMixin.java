@@ -13,7 +13,6 @@ import org.spongepowered.asm.mixin.Mixin;
 
 @Mixin(ItemRenderer.class)
 public abstract class ItemRendererMixin {
-	// TODO-VERIFY: verify item and block-item identifiers through nested and custom item renderers.
 	@WrapMethod(method = "render")
 	private void vitrailvk$itemIds(ItemStack stack, ItemDisplayContext context, boolean leftHand, PoseStack poses,
 			MultiBufferSource buffers, int light, int overlay, BakedModel model, Operation<Void> original) {

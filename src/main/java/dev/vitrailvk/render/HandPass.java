@@ -41,7 +41,21 @@ public final class HandPass {
 		return active && solid == translucent;
 	}
 
-	// TODO-VERIFY: confirm hand transforms, depth scale, render hooks and light state in a live frame.
+	/**
+	 * The projection the hand is drawn under. Iris scales clip z by 0.125 in GL's -1..1 range, which puts
+	 * the hand's window depth into 0.4375..0.5625, and packs test for that range ({@code depth < 0.56}).
+	 * VulkanMod's matrices are forward 0..1, where the same depth is {@code z' = 0.125 z + 0.4375 w}.
+	 */
+	private static Matrix4f handProjection(GameRenderer game, GameRendererAccessor access, Camera camera, float tick) {
+		Matrix4f m = new Matrix4f(game.getProjectionMatrix(access.vitrailvk$getFov(camera, tick, false)));
+		m.m02(0.125F * m.m02() + 0.4375F * m.m03());
+		m.m12(0.125F * m.m12() + 0.4375F * m.m13());
+		m.m22(0.125F * m.m22() + 0.4375F * m.m23());
+		m.m32(0.125F * m.m32() + 0.4375F * m.m33());
+		return m;
+	}
+
+	// TODO-VERIFY: runs only in a live frame. Hand position, depth range and light against Iris on one pack.
 	public static void render(Camera camera, GameRenderer game, float tick, boolean opaque) {
 		Minecraft mc = Minecraft.getInstance();
 		GameRendererAccessor access = (GameRendererAccessor) game;
@@ -49,8 +63,7 @@ public final class HandPass {
 				|| !(camera.getEntity() instanceof Player) || mc.player == null || mc.gameMode == null
 				|| mc.options.hideGui || mc.player.isSleeping() || mc.gameMode.getPlayerMode() == GameType.SPECTATOR) return;
 		Matrix4f projection = new Matrix4f(RenderSystem.getProjectionMatrix());
-		Matrix4f handProjection = new Matrix4f().scale(1.0F, 1.0F, 0.125F)
-				.mul(game.getProjectionMatrix(access.vitrailvk$getFov(camera, tick, false)));
+		Matrix4f handProjection = handProjection(game, access, camera, tick);
 		PoseStack poses = new PoseStack();
 		access.vitrailvk$bobHurt(poses, tick);
 		if (mc.options.bobView().get()) access.vitrailvk$bobView(poses, tick);

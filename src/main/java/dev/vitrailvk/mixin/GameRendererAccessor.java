@@ -9,7 +9,6 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(GameRenderer.class)
 public interface GameRendererAccessor {
-	// TODO-VERIFY: verify private hand setup accessors against the running NeoForge client.
 	@Accessor("renderHand") boolean vitrailvk$renderHand();
 	@Invoker("getFov") double vitrailvk$getFov(Camera camera, float tick, boolean useSetting);
 	@Invoker("bobHurt") void vitrailvk$bobHurt(PoseStack poses, float tick);

@@ -31,6 +31,9 @@ public final class SpirvModule {
 	private static final int OP_TYPE_POINTER = 32;
 	private static final int OP_CONSTANT = 43;
 	private static final int OP_VARIABLE = 59;
+	private static final int OP_LOAD = 61;
+	private static final int OP_ACCESS_CHAIN = 65;
+	private static final int OP_IN_BOUNDS_ACCESS_CHAIN = 66;
 	private static final int OP_DECORATE = 71;
 
 	// Decorations
@@ -65,8 +68,13 @@ public final class SpirvModule {
 	public record Resource(String name, int type, int count, int dim, boolean depth, int bindingWord) {
 	}
 
-	/** A user-defined input or output with a location. */
-	public record Interface(String name, int location, int locationWord, int typeId) {
+	/**
+	 * A user-defined input or output with a location.
+	 *
+	 * @param read whether the stage's code touches it. Every declared variable is in the entry point's
+	 *             interface whether it is read or not, so being listed says nothing.
+	 */
+	public record Interface(String name, int location, int locationWord, int typeId, boolean read) {
 	}
 
 	private final int[] words;
@@ -98,6 +106,7 @@ public final class SpirvModule {
 		Map<Integer, Integer> constants = new HashMap<>();
 		Map<Integer, Boolean> samplers = new HashMap<>();
 		List<int[]> variables = new ArrayList<>(); // {resultType, id, storage}
+		java.util.Set<Integer> read = new java.util.HashSet<>();
 
 		int at = 5;
 		while (at < this.words.length) {
@@ -128,6 +137,7 @@ public final class SpirvModule {
 				case OP_TYPE_RUNTIME_ARRAY -> arrays.put(this.words[at + 1], new int[] {this.words[at + 2], -1});
 				case OP_CONSTANT -> constants.put(this.words[at + 2], this.words[at + 3]);
 				case OP_VARIABLE -> variables.add(new int[] {this.words[at + 1], this.words[at + 2], this.words[at + 3]});
+				case OP_LOAD, OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN -> read.add(this.words[at + 3]);
 				default -> { }
 			}
 			at += count;
@@ -144,7 +154,7 @@ public final class SpirvModule {
 			if (storage == SC_INPUT || storage == SC_OUTPUT) {
 				Integer word = locationWord.get(id);
 				if (word == null || builtin.containsKey(id) || name.isEmpty()) continue;
-				Interface entry = new Interface(name, this.words[word], word, type);
+				Interface entry = new Interface(name, this.words[word], word, type, read.contains(id));
 				(storage == SC_INPUT ? this.inputs : this.outputs).put(name, entry);
 				continue;
 			}

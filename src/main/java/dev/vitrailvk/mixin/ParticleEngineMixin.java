@@ -15,7 +15,6 @@ import java.util.function.Predicate;
 
 @Mixin(ParticleEngine.class)
 public abstract class ParticleEngineMixin {
-	// TODO-VERIFY: confirm particle render types and phase boundaries with NeoForge at runtime.
 	@WrapMethod(method = "render(Lnet/minecraft/client/renderer/LightTexture;Lnet/minecraft/client/Camera;FLnet/minecraft/client/renderer/culling/Frustum;Ljava/util/function/Predicate;)V")
 	private void vitrailvk$particlePhase(LightTexture light, Camera camera, float tick, Frustum frustum,
 			Predicate<ParticleRenderType> predicate, Operation<Void> original) {

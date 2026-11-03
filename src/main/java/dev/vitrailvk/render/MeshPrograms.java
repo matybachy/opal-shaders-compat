@@ -1,29 +1,42 @@
 package dev.vitrailvk.render;
 
-import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.vitrail.glsl.PackProgram;
+import dev.vitrail.glsl.ProgramTranslator;
+import dev.vitrail.pack.model.TargetSize;
 import dev.vitrail.pack.source.OpenedPack;
 import dev.vitrail.pack.target.ChainPlan;
+import dev.vitrail.pack.target.TargetPlan;
+import dev.vitrail.pack.target.TargetSchedule;
 import dev.vitrail.render.PackValues;
 import dev.vitrail.uniform.UniformBlock;
+import dev.vitrailvk.VitrailVk;
 import dev.vitrailvk.compile.SpirvCompiler;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Lazily translates each format and family combination requested by a mesh draw. */
+/**
+ * The pack's programs for mesh draws, translated and compiled the first time a family asks for one. A
+ * program that cannot be served is logged once and its family handed back to VulkanMod; it does not
+ * take the rest of the pack with it.
+ */
 final class MeshPrograms implements AutoCloseable {
-	private record Key(Families.Piece piece, VertexFormat format, boolean afterDeferred) {
+	private record Key(Families.Piece piece, boolean afterDeferred) {
 	}
 
-	record ShadowProgram(PackProgram.Loaded loaded, PackPipeline pipeline, UniformBlock uniforms) {
+	private record Compiled(PackPipeline pipeline, UniformBlock uniforms) {
 	}
 
-	record Program(PackProgram.Loaded loaded, PackPipeline pipeline, UniformBlock uniforms, ChainPlan.Pass pass) {
+	/**
+	 * @param pass the targets it writes; for a shadow program the shadow colours are asked for separately
+	 */
+	record Program(PackProgram.Loaded loaded, PackPipeline pipeline, UniformBlock uniforms, ChainPlan.Pass pass,
+			String served, boolean shadow) {
 	}
 
 	private final OpenedPack pack;
@@ -31,7 +44,8 @@ final class MeshPrograms implements AutoCloseable {
 	private final PackValues values;
 	private final SpirvCompiler compiler;
 	private final Map<Key, Optional<Program>> programs = new HashMap<>();
-	private final Map<Key, Optional<ShadowProgram>> shadows = new HashMap<>();
+	private final Map<Families.Piece, Optional<PackProgram.Loaded>> loaded = new HashMap<>();
+	private final Map<ProgramTranslator.TranslatedProgram, Compiled> compiled = new IdentityHashMap<>();
 
 	MeshPrograms(OpenedPack pack, PackProgram.Chain chain, PackValues values, SpirvCompiler compiler) {
 		this.pack = pack;
@@ -40,72 +54,93 @@ final class MeshPrograms implements AutoCloseable {
 		this.compiler = compiler;
 	}
 
-	Optional<Program> resolve(Families.Piece piece, VertexFormat format, boolean afterDeferred) {
-		return this.programs.computeIfAbsent(new Key(piece, format, afterDeferred), this::load);
+	Optional<Program> resolve(Families.Piece piece, boolean afterDeferred) {
+		return this.programs.computeIfAbsent(new Key(piece, afterDeferred), this::load);
 	}
 
-	Optional<ShadowProgram> resolveShadow(Families.Piece piece, VertexFormat format) {
-		return this.shadows.computeIfAbsent(new Key(piece, format, false), this::loadShadow);
-	}
-
-	// TODO-VERIFY: check shadow entity variants, uniforms and sampler bindings in a live frame.
-	private Optional<ShadowProgram> loadShadow(Key key) {
-		Families.Piece piece = key.piece();
-		PackProgram.GeometryElement element = new PackProgram.GeometryElement("shadowMesh", piece.program(),
-				piece.alpha(), piece.inputs(), piece.bound(), false);
-		PackProgram.Loaded loaded;
-		try {
-			loaded = PackProgram.loadGeometry(this.pack, this.chain.place(), List.of(element)).get("shadowMesh");
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-		if (loaded == null) return Optional.empty();
-		loaded = loaded.rebind(this.chain.targets(), Optional.empty());
-		PackPipeline pipeline = new PackPipeline("shadowMesh:" + loaded.path(), loaded.program(), this.compiler,
-				PackPipeline.Kind.MESH, key.format());
-		try {
-			UniformBlock uniforms = new UniformBlock(loaded.program().uniforms(), this.values.shadowGeometryCatalog());
-			return Optional.of(new ShadowProgram(loaded, pipeline, uniforms));
-		} catch (RuntimeException | Error e) {
-			pipeline.close();
-			throw e;
-		}
-	}
-	// TODO-VERIFY: validate translated mesh programs and target halves during an actual frame.
 	private Optional<Program> load(Key key) {
 		Families.Piece piece = key.piece();
+		String name = piece.program() + "|" + piece.inputs();
+		try {
+			Optional<PackProgram.Loaded> translated = this.loaded.computeIfAbsent(piece, this::translate);
+			if (translated.isEmpty()) {
+				VitrailVk.LOGGER.info("[pack] {}: no program of the pack serves it; VulkanMod draws it", name);
+				return Optional.empty();
+			}
+			boolean shadow = piece.program().startsWith("shadow");
+			String path = translated.get().path();
+			String served = path.substring(path.lastIndexOf('/') + 1);
+			TargetSchedule schedule = this.chain.targets().schedule();
+			Optional<TargetSchedule.Bound> step = shadow ? Optional.empty()
+					: key.afterDeferred() ? schedule.stepAfterDeferred(served) : schedule.step(served);
+			PackProgram.Loaded bound = translated.get().rebind(this.chain.targets(), step);
+			Compiled compiled = this.compiled.get(bound.program());
+			if (compiled == null) {
+				PackPipeline pipeline = new PackPipeline("mesh:" + path, bound.program(), this.compiler, PackPipeline.Kind.MESH);
+				UniformBlock uniforms = PackRenderer.block("mesh:" + path, bound,
+						shadow ? this.values.shadowGeometryCatalog() : this.values.geometryCatalog());
+				compiled = new Compiled(pipeline, uniforms);
+				this.compiled.put(bound.program(), compiled);
+			}
+			ChainPlan.Pass pass = shadow ? null : attachments(served, key.afterDeferred(), step);
+			if (!shadow && pass == null) {
+				VitrailVk.LOGGER.info("[pack] {}: {} writes no target of this place; VulkanMod draws it", name, served);
+				return Optional.empty();
+			}
+			return Optional.of(new Program(bound, compiled.pipeline(), compiled.uniforms(), pass, served, shadow));
+		} catch (RuntimeException e) {
+			VitrailVk.LOGGER.error("[pack] {} could not be loaded; VulkanMod draws it", name, e);
+			return Optional.empty();
+		}
+	}
+
+	private Optional<PackProgram.Loaded> translate(Families.Piece piece) {
 		PackProgram.GeometryElement element = new PackProgram.GeometryElement("mesh", piece.program(),
 				piece.alpha(), piece.inputs(), piece.bound(), false);
-		PackProgram.Loaded loaded;
 		try {
-			loaded = PackProgram.loadGeometry(this.pack, this.chain.place(), List.of(element)).get("mesh");
+			return Optional.ofNullable(PackProgram.loadGeometry(this.pack, this.chain.place(), List.of(element)).get("mesh"));
 		} catch (IOException e) {
-			throw new UncheckedIOException(e);
+			VitrailVk.LOGGER.error("[pack] {} could not be read", piece.program(), e);
+			return Optional.empty();
 		}
-		if (loaded == null) return Optional.empty();
-		String path = loaded.path();
-		String served = path.substring(path.lastIndexOf('/') + 1);
-		Optional<ChainPlan.Pass> pass = this.chain.chain().geometryOf(served, key.afterDeferred());
-		if (pass.isEmpty()) return Optional.empty();
-		var schedule = this.chain.targets().schedule();
-		loaded = loaded.rebind(this.chain.targets(), key.afterDeferred()
-				? schedule.stepAfterDeferred(served) : schedule.step(served));
-		PackPipeline pipeline = new PackPipeline("mesh:" + path, loaded.program(), this.compiler,
-				PackPipeline.Kind.MESH, key.format());
-		try {
-			UniformBlock uniforms = new UniformBlock(loaded.program().uniforms(), this.values.geometryCatalog());
-			return Optional.of(new Program(loaded, pipeline, uniforms, pass.get()));
-		} catch (RuntimeException | Error e) {
-			pipeline.close();
-			throw e;
+	}
+
+	/**
+	 * The plan answers for the names its own families ask about, and {@code gbuffers_beaconbeam} or
+	 * {@code gbuffers_lightning} are not among them, nor is every name on both sides of the deferred
+	 * stage. So the same walk once more for those ({@code ChainPlan.geometryOf}, which is private), from
+	 * what the target plan knows of every geometry program. Without it those draws would land in
+	 * VulkanMod's own target, which the final pass overwrites. Null if nothing of it can be written.
+	 */
+	private ChainPlan.Pass attachments(String served, boolean afterDeferred, Optional<TargetSchedule.Bound> step) {
+		ChainPlan plan = this.chain.chain();
+		Optional<ChainPlan.Pass> asked = plan.geometryOf(served, afterDeferred);
+		if (asked.isPresent() && !asked.get().attachments().isEmpty()) return asked.get();
+		TargetPlan targets = this.chain.targets();
+		List<ChainPlan.Attachment> attachments = new ArrayList<>();
+		TargetSize size = null;
+		for (int index : targets.writes(served)) {
+			// Past a target this place has not got, the outputs would no longer line up with their ranks.
+			if (!targets.allocated().contains(index)) break;
+			TargetSize here = targets.directives().size(index);
+			if (size != null && !size.equals(here)) break;
+			size = here;
+			attachments.add(new ChainPlan.Attachment(index,
+					step.map(bound -> bound.write(index)).orElse(TargetSchedule.Side.MAIN)));
 		}
+		if (attachments.isEmpty()) {
+			if (!targets.allocated().contains(0)) return null;
+			attachments.add(new ChainPlan.Attachment(0, step.map(bound -> bound.write(0)).orElse(TargetSchedule.Side.MAIN)));
+			size = targets.directives().size(0);
+		}
+		return new ChainPlan.Pass(served, attachments, size, false);
 	}
 
 	@Override
 	public void close() {
-		this.programs.values().forEach(program -> program.ifPresent(value -> value.pipeline().close()));
+		this.compiled.values().forEach(compiled -> compiled.pipeline().close());
+		this.compiled.clear();
 		this.programs.clear();
-		this.shadows.values().forEach(program -> program.ifPresent(value -> value.pipeline().close()));
-		this.shadows.clear();
+		this.loaded.clear();
 	}
 }

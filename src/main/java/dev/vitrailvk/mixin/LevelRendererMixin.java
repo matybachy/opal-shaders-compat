@@ -35,7 +35,6 @@ public abstract class LevelRendererMixin {
 		PackRenderer.beforeSky(camera, deltaTracker.getGameTimeDeltaPartialTick(true));
 	}
 
-	// TODO-VERIFY: verify the phases against NeoForge sky, cloud and weather extensions at runtime.
 	@WrapMethod(method = "renderSky")
 	private void vitrailvk$skyPhase(Matrix4f view, Matrix4f projection, float tick, Camera camera,
 			boolean foggy, Runnable fog, Operation<Void> original) {
@@ -47,7 +46,6 @@ public abstract class LevelRendererMixin {
 		}
 	}
 
-	// TODO-VERIFY: confirm cloud extension ordering at runtime.
 	@WrapMethod(method = "renderClouds")
 	private void vitrailvk$cloudPhase(PoseStack poses, Matrix4f view, Matrix4f projection, float tick,
 			double x, double y, double z, Operation<Void> original) {
@@ -59,7 +57,6 @@ public abstract class LevelRendererMixin {
 		}
 	}
 
-	// TODO-VERIFY: confirm weather extension ordering at runtime.
 	@WrapMethod(method = "renderSnowAndRain")
 	private void vitrailvk$weatherPhase(LightTexture light, float tick, double x, double y, double z,
 			Operation<Void> original) {
@@ -70,7 +67,8 @@ public abstract class LevelRendererMixin {
 			PackRenderer.popPhase();
 		}
 	}
-	// TODO-VERIFY: both translucent branches must invoke this once per live frame.
+
+	/** Both branches of the translucent stage ask for the render type; it takes the first only. */
 	@Inject(method = "renderLevel", at = @At(value = "INVOKE",
 			target = "Lnet/minecraft/client/renderer/RenderType;translucent()Lnet/minecraft/client/renderer/RenderType;"))
 	private void vitrailvk$solidHand(DeltaTracker tick, boolean outline, Camera camera, GameRenderer game,
@@ -78,9 +76,9 @@ public abstract class LevelRendererMixin {
 		PackRenderer.renderSolidHand(camera, game, tick.getGameTimeDeltaPartialTick(true));
 	}
 
-	// TODO-VERIFY: verify this return occurs after deferred and before the final pass for each graphics mode.
 	@Inject(method = "renderLevel", at = @At("RETURN"))
 	private void vitrailvk$translucentHand(DeltaTracker tick, boolean outline, Camera camera, GameRenderer game,
 			LightTexture light, Matrix4f view, Matrix4f projection, CallbackInfo ci) {
 		PackRenderer.renderTranslucentHand(camera, game, tick.getGameTimeDeltaPartialTick(true));
-	}}
+	}
+}

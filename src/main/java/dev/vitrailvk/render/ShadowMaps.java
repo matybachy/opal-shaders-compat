@@ -52,7 +52,6 @@ final class ShadowMaps implements AutoCloseable {
 		this.compareSamplers[1] = compareSampler(this.depthNoTranslucent.mipLevels);
 	}
 
-	// TODO-VERIFY: validate depth-format blit capabilities and sampled mip levels on live devices.
 	private static boolean supportsDepthBlit() {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkFormatProperties properties = VkFormatProperties.malloc(stack);
@@ -125,7 +124,8 @@ final class ShadowMaps implements AutoCloseable {
 		return this.alternateColours.computeIfAbsent(index, this::createColour);
 	}
 
-	// TODO-VERIFY: validate shadow color ping-pong and explicit flips across frames at runtime.
+	// Iris's rule (ShadowCompositeRenderer, ShadowRenderTargets): a flipped target reads its alternate half
+	// and writes its main one, and the flips start over each frame.
 	VulkanImage sampledColour(int index) {
 		return this.flipped.contains(index) ? alternateColour(index) : colour(index);
 	}
@@ -150,12 +150,13 @@ final class ShadowMaps implements AutoCloseable {
 		TargetFormat format = index < this.directives.size()
 				? this.directives.get(index).format().used() : TargetFormat.RGBA8_UNORM;
 		int levels = this.mipmapped.contains(index) ? Integer.SIZE - Integer.numberOfLeadingZeros(this.resolution) : 1;
+		int vkFormat = PackTargets.vkFormat(format);
 		return VulkanImage.builder(this.resolution, this.resolution)
 				.setMipLevels(levels).setLevelViews(levels > 1)
-				.setFormat(PackTargets.vkFormat(format))
+				.setFormat(vkFormat)
 				.setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 						| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-						| VK_IMAGE_USAGE_STORAGE_BIT)
+						| Vk.storageUsage(vkFormat))
 				.setLinearFiltering(!format.integer())
 				.setClamp(true)
 				.createVulkanImage();

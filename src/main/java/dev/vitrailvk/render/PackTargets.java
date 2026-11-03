@@ -5,6 +5,7 @@ import dev.vitrail.pack.model.TargetSize;
 import dev.vitrail.pack.target.TargetDirectives;
 import dev.vitrail.pack.target.TargetPlan;
 import dev.vitrail.pack.target.TargetSchedule;
+import dev.vitrailvk.vk.Vk;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.Map;
@@ -64,7 +65,7 @@ final class PackTargets implements AutoCloseable {
 				.setFormat(format)
 				.setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 						| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-						| VK_IMAGE_USAGE_STORAGE_BIT)
+						| Vk.storageUsage(format))
 				.setLinearFiltering(!integer)
 				.setClamp(true);
 		if (levels > 1) builder.setMipLevels(levels).setLevelViews(true);

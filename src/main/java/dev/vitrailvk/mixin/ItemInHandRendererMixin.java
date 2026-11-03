@@ -14,7 +14,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ItemInHandRenderer.class)
 public abstract class ItemInHandRendererMixin {
-	// TODO-VERIFY: validate per-hand selection and NeoForge first-person hooks at runtime.
 	@Inject(method = "renderArmWithItem", at = @At("HEAD"), cancellable = true)
 	private void vitrailvk$selectHand(AbstractClientPlayer player, float tick, float pitch, InteractionHand hand,
 			float swing, ItemStack stack, float equip, PoseStack poses, MultiBufferSource buffers, int light, CallbackInfo ci) {

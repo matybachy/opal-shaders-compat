@@ -80,6 +80,9 @@ public final class PackImage extends VulkanImage {
 
 	public int depth() { return this.depth; }
 
+	/** 1, 2 or 3: what a descriptor of this image's view can be declared as. */
+	public int dimensions() { return this.dimensions; }
+
 	public long view(int format) {
 		if (format == this.format) return getImageView();
 		return this.views.computeIfAbsent(format, requested -> {

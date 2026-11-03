@@ -11,7 +11,6 @@ import org.spongepowered.asm.mixin.Mixin;
 
 @Mixin(BlockEntityRenderDispatcher.class)
 public abstract class BlockEntityRenderDispatcherMixin {
-	// TODO-VERIFY: confirm block-entity context and buffered vertices in a live frame.
 	@WrapMethod(method = "render")
 	private <E extends BlockEntity> void vitrailvk$blockEntityIds(E entity, float tick, PoseStack poses,
 			MultiBufferSource buffers, Operation<Void> original) {

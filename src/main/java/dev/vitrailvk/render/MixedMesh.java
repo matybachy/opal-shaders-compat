@@ -8,16 +8,34 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Partitions triangles into consecutive entity and block-entity runs without reordering them. */
+/**
+ * Splits one batch into consecutive runs of entity and block entity triangles, without reordering them:
+ * the game's shared buffers take both, and the two have programs of their own.
+ */
 final class MixedMesh {
 	private static final int[] QUAD = {0, 1, 2, 0, 2, 3};
-	record Run(DrawIds.Kind kind, ByteBuffer indices, int count) {
+
+	record Run(boolean blockEntity, ByteBuffer indices, int count) {
 	}
 
 	private MixedMesh() {
 	}
 
-	// TODO-VERIFY: verify sorted index streams and primitive boundaries with live batched geometry.
+	/** What the whole batch is: one of the two, or {@code null} if it holds both. */
+	static DrawIds.Kind kindOf(DrawIds[] ids, int vertices) {
+		if (ids == null) return DrawIds.Kind.NONE;
+		DrawIds.Kind found = DrawIds.Kind.NONE;
+		int count = Math.min(ids.length, vertices);
+		for (int i = 0; i < count; i++) {
+			DrawIds.Kind kind = ids[i].kind();
+			if (kind == DrawIds.Kind.NONE || kind == found) continue;
+			if (found != DrawIds.Kind.NONE) return null;
+			found = kind;
+		}
+		return found;
+	}
+
+	/** Empty if the batch cannot be split, which its caller answers by drawing it whole. */
 	static List<Run> split(MeshData mesh, DrawIds[] ids) {
 		MeshData.DrawState state = mesh.drawState();
 		if (ids == null || ids.length != state.vertexCount()) return List.of();
@@ -36,35 +54,35 @@ final class MixedMesh {
 		int[] all = new int[count];
 		for (int i = 0; i < count; i++) {
 			int index;
-			if (input != null) index = state.indexType() == VertexFormat.IndexType.SHORT
-					? Short.toUnsignedInt(input.getShort()) : input.getInt();
-			else if (state.mode() == VertexFormat.Mode.QUADS) {
+			if (input != null) {
+				index = state.indexType() == VertexFormat.IndexType.SHORT ? Short.toUnsignedInt(input.getShort()) : input.getInt();
+			} else if (state.mode() == VertexFormat.Mode.QUADS) {
 				index = i / 6 * 4 + QUAD[i % 6];
-			} else index = i;
+			} else {
+				index = i;
+			}
 			if (index < 0 || index >= ids.length) return List.of();
 			all[i] = index;
 		}
 		List<Run> runs = new ArrayList<>();
 		int start = 0;
-		DrawIds.Kind kind = null;
-		for (int i = 0; i < count; i += 3) {
-			DrawIds.Kind triangle = ids[all[i]].kind();
-			if (triangle == DrawIds.Kind.NONE || ids[all[i + 1]].kind() != triangle
-					|| ids[all[i + 2]].kind() != triangle) return List.of();
-			if (kind != null && triangle != kind) {
-				runs.add(run(kind, all, start, i));
+		boolean current = ids[all[0]].kind() == DrawIds.Kind.BLOCK_ENTITY;
+		for (int i = 3; i < count; i += 3) {
+			boolean triangle = ids[all[i]].kind() == DrawIds.Kind.BLOCK_ENTITY;
+			if (triangle != current) {
+				runs.add(run(current, all, start, i));
 				start = i;
+				current = triangle;
 			}
-			kind = triangle;
 		}
-		runs.add(run(kind, all, start, count));
+		runs.add(run(current, all, start, count));
 		return List.copyOf(runs);
 	}
 
-	private static Run run(DrawIds.Kind kind, int[] indices, int start, int end) {
+	private static Run run(boolean blockEntity, int[] indices, int start, int end) {
 		ByteBuffer bytes = ByteBuffer.allocate(Math.multiplyExact(end - start, Integer.BYTES)).order(ByteOrder.nativeOrder());
 		for (int i = start; i < end; i++) bytes.putInt(indices[i]);
 		bytes.flip();
-		return new Run(kind, bytes, end - start);
+		return new Run(blockEntity, bytes, end - start);
 	}
 }

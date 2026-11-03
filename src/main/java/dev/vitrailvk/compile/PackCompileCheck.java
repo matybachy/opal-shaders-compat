@@ -5,11 +5,14 @@ import dev.vitrail.glsl.ProgramTranslator;
 import dev.vitrail.glsl.TranslatedUnit;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.load.PackLoader;
+import dev.vitrail.pack.model.AlphaTest;
 import dev.vitrail.pack.model.ProgramStage;
+import dev.vitrail.pack.program.ChainFilter;
 import dev.vitrail.pack.program.ProgramSet;
 import dev.vitrail.pack.source.DimensionSet;
 import dev.vitrail.pack.source.OpenedPack;
 import dev.vitrail.pack.source.ShaderPackSource;
+import dev.vitrail.pack.target.ChainPlan;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,12 +108,109 @@ public final class PackCompileCheck {
 					dump(dumpDir, packName, name, unit.text());
 				}
 			}
+			int[] counted = meshFamilies(opened, packName, compiler, dumpDir, failures);
+			units += counted[0];
+			compiled += counted[1];
 		}
 		Report report = new Report(packName, programs.size(), units, compiled, failures,
 				(System.nanoTime() - start) / 1_000_000L);
 		LOGGER.info("[compile] {}: {} programs, {}/{} units compiled, {} failures, {} ms", packName,
 				report.programs(), compiled, units, failures.size(), report.millis());
 		return report;
+	}
+
+	/**
+	 * The programs the game's own draws ask for, as the renderer loads them: by name through the fallback
+	 * tree and with the vertex inputs of their family ({@code render/Families}, which cannot be read here
+	 * because it needs the game's vertex formats). Nothing else compiles these before the first frame that
+	 * draws one, so this is what stands between a bad translation and a family missing from the picture.
+	 * Also holds each to what a pipeline can feed: an input neither a vanilla format nor the renderer's
+	 * constants answer stops {@code PackPipeline} from being built.
+	 *
+	 * @return units found and units compiled
+	 */
+	private static int[] meshFamilies(OpenedPack opened, String packName, SpirvCompiler compiler, Path dumpDir,
+			List<Failure> failures) {
+		int units = 0;
+		int compiled = 0;
+		String place;
+		try {
+			place = PackProgram.loadChain(opened, "world0", ChainFilter.ALL, ChainPlan.Families.DEFAULT).place();
+		} catch (IOException | RuntimeException e) {
+			failures.add(new Failure("(chain)", "plan", e.toString()));
+			LOGGER.error("[compile] {}: the chain could not be planned", packName, e);
+			return new int[] {0, 0};
+		}
+		for (PackProgram.GeometryElement element : meshElements()) {
+			String label = element.program() + "[" + element.inputs() + " " + String.join(",", element.bound()) + "]";
+			PackProgram.Loaded loaded;
+			try {
+				loaded = PackProgram.loadGeometry(opened, place, List.of(element)).get(element.element());
+			} catch (IOException | RuntimeException e) {
+				failures.add(new Failure(label, "translate", e.toString()));
+				LOGGER.error("[compile] {} {}: translation failed", packName, label, e);
+				continue;
+			}
+			if (loaded == null) continue;
+			for (TranslatedUnit unit : loaded.program().stages().values()) {
+				units++;
+				String name = label + "." + unit.stage().extension();
+				SpirvCompiler.Result result = compiler.compile(name, unit.text(), unit.stage());
+				if (!result.ok()) {
+					StringBuilder detail = new StringBuilder();
+					result.diagnostics().forEach(d -> detail.append("\n    ").append(d));
+					failures.add(new Failure(label, unit.stage().extension(), detail.toString()));
+					LOGGER.error("[compile] {} {}: {} error(s){}", packName, name, result.errors(), detail);
+					dump(dumpDir, packName, name, unit.text());
+					continue;
+				}
+				compiled++;
+				if (unit.stage() != ProgramStage.VERTEX) continue;
+				for (String input : new SpirvModule(result.spirv()).inputs().keySet()) {
+					if (!FEEDABLE_INPUTS.contains(input)) {
+						failures.add(new Failure(label, "vertex input", input + " is answered by nothing"));
+						LOGGER.error("[compile] {} {}: vertex input {} is answered by nothing", packName, name, input);
+					}
+				}
+			}
+		}
+		return new int[] {units, compiled};
+	}
+
+	/** What the elements of a vanilla format or {@code PackPipeline.Constants} can answer. */
+	private static final Set<String> FEEDABLE_INPUTS = Set.of("Position", "Color", "UV0", "UV1", "UV2", "Normal",
+			"EntityIds", "MidTexCoord", "Tangent", "LineWidth");
+
+	private static List<PackProgram.GeometryElement> meshElements() {
+		List<PackProgram.GeometryElement> elements = new ArrayList<>();
+		List<String> glyph = List.of("Position", "Color", "UV0", "UV2");
+		for (String program : List.of("gbuffers_hand", "gbuffers_block_translucent", "gbuffers_entities_translucent")) {
+			elements.add(new PackProgram.GeometryElement("mesh", program, AlphaTest.NON_ZERO, VertexInputs.GLYPH, glyph, false));
+		}
+		elements.add(same("gbuffers_line", AlphaTest.OFF, VertexInputs.LINES));
+		elements.add(same("gbuffers_armor_glint", AlphaTest.NON_ZERO, VertexInputs.GLINT));
+		elements.add(same("gbuffers_damagedblock", AlphaTest.ONE_TENTH, VertexInputs.CRUMBLING));
+		for (String program : List.of("gbuffers_weather", "gbuffers_particles", "gbuffers_particles_translucent")) {
+			elements.add(same(program, AlphaTest.ONE_TENTH, VertexInputs.PARTICLE));
+		}
+		elements.add(new PackProgram.GeometryElement("mesh", "gbuffers_skybasic", AlphaTest.NON_ZERO, VertexInputs.SKY,
+				List.of("Position"), false));
+		elements.add(new PackProgram.GeometryElement("mesh", "gbuffers_skybasic", AlphaTest.NON_ZERO, VertexInputs.SKY,
+				List.of("Position", "Color"), false));
+		elements.add(new PackProgram.GeometryElement("mesh", "gbuffers_skytextured", AlphaTest.OFF, VertexInputs.SKY,
+				List.of("Position", "UV0"), false));
+		elements.add(new PackProgram.GeometryElement("mesh", "gbuffers_skytextured", AlphaTest.OFF, VertexInputs.SKY,
+				List.of("Position", "UV0", "Color"), false));
+		for (String program : List.of("gbuffers_basic", "gbuffers_textured", "gbuffers_clouds", "gbuffers_lightning",
+				"gbuffers_beaconbeam", "gbuffers_entities", "gbuffers_entities_translucent", "gbuffers_spidereyes",
+				"gbuffers_block", "gbuffers_block_translucent", "gbuffers_hand", "gbuffers_hand_water", "shadow_entities")) {
+			elements.add(same(program, AlphaTest.ONE_TENTH, VertexInputs.ENTITY));
+		}
+		return elements;
+	}
+
+	private static PackProgram.GeometryElement same(String program, AlphaTest alpha, VertexInputs inputs) {
+		return new PackProgram.GeometryElement("mesh", program, alpha, inputs, inputs.elements(), false);
 	}
 
 	private static Optional<ProgramTranslator.TranslatedProgram> translate(Path packPath, OpenedPack opened,

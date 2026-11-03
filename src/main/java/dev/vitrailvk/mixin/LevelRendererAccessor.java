@@ -9,7 +9,6 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(LevelRenderer.class)
 public interface LevelRendererAccessor {
-	// TODO-VERIFY: confirm the private entity dispatch target against the transformed client.
 	@Invoker("renderEntity")
 	void vitrailvk$renderEntity(Entity entity, double x, double y, double z, float tick,
 			PoseStack poses, MultiBufferSource buffers);

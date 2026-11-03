@@ -14,8 +14,9 @@ import static org.lwjgl.vulkan.VK10.*;
 @Mixin(value = VulkanImage.class, remap = false)
 public abstract class VulkanImageMixin {
 
-	// Target verified in refs/VulkanMod-Reforged VulkanImage; VMR only accounts for fragment reads.
-	// TODO-VERIFY: verify mixin application and shared layout tracking with VMR during rendering.
+	// VulkanMod has no case for GENERAL and throws, and its read barrier only covers the fragment stage,
+	// while packs sample in vertex stages as well. Its own images go through here too, which costs a wider
+	// barrier and nothing else: the layout it tracks stays true (ImageLayouts sets it).
 	@Inject(method = "transitionImageLayout(Lorg/lwjgl/system/MemoryStack;Lorg/lwjgl/vulkan/VkCommandBuffer;Lnet/vulkanmod/vulkan/texture/VulkanImage;I)V",
 			at = @At("HEAD"), cancellable = true)
 	private static void vitrailvk$storageLayout(MemoryStack stack, VkCommandBuffer cmd, VulkanImage image,
