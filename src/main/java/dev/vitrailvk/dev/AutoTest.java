@@ -54,6 +54,7 @@ import java.util.Locale;
 public final class AutoTest {
 
 	public static final boolean ENABLED = Boolean.getBoolean("vitrailvk.autotest");
+	private static final List<String> DEFAULT_SCRIPT = List.of("settle", "shot screenshot", "quit");
 	public static final AutoTest INSTANCE = new AutoTest();
 
 	/** Frames VulkanMod Reforged has presented, counted by {@code RendererMixin}. */
@@ -63,7 +64,6 @@ public final class AutoTest {
 	private static final long SEED = 20261027L;
 	/** Ticks the chunk builder must stay idle before the picture counts as settled. */
 	private static final int IDLE_TICKS = 40;
-	private static final List<String> DEFAULT_SCRIPT = List.of("settle", "shot screenshot", "quit");
 
 	private enum State { START, LOADING, RUNNING, DONE }
 

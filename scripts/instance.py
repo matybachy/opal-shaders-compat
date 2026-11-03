@@ -2,7 +2,8 @@
 """A clean NeoForge client outside the dev run, for testing the built jar.
 
   scripts/instance.py create NAME          install NeoForge into test-instance/NAME
-  scripts/instance.py run NAME [options]   start it with what is in its mods/ folder
+  scripts/instance.py install NAME         the freshly built jar, VulkanMod Reforged and the test packs into it
+  scripts/instance.py run NAME [options]   start it with what is in its mods/ folder, then summarise the run
 
 Options of run:
   --pack NAME      shader pack (vitrailvk.pack)
@@ -18,12 +19,16 @@ Options of run:
 Output goes to test-instance/NAME/autotest. The Java is Zulu 21 from JAVA_HOME or the usual place.
 """
 import argparse
+import collections
 import json
 import os
 import pathlib
 import platform
+import re
+import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -51,6 +56,51 @@ def create(name):
     subprocess.check_call([str(JAVA), "-jar", str(installer), "--install-client", str(home)])
     (home / "mods").mkdir(exist_ok=True)
     print("installed in", home)
+
+
+def install(name):
+    home = instance(name)
+    mods = home / "mods"
+    mods.mkdir(exist_ok=True)
+    for old in mods.glob("vitrailvk-*.jar"):
+        old.unlink()
+    built = sorted((ROOT / "build" / "libs").glob("vitrailvk-*.jar"), key=lambda path: path.stat().st_mtime)[-1]
+    shutil.copy2(built, mods)
+    for library in (ROOT / "libs").glob("VulkanMod-Reforged-*.jar"):
+        shutil.copy2(library, mods)
+    packs = home / "shaderpacks"
+    packs.mkdir(exist_ok=True)
+    for pack in (ROOT / "run" / "shaderpacks").iterdir():
+        if pack.is_dir():
+            shutil.copytree(pack, packs / pack.name, dirs_exist_ok=True)
+        else:
+            shutil.copy2(pack, packs)
+    print("installed", built.name)
+
+
+# VulkanMod Reforged's own, without any pack: see PORTING.md.
+BASELINE = {"VUID-vkQueueSubmit-pSignalSemaphores-00067", "VUID-vkDestroyDevice-device-05137"}
+
+
+def summarise(home, started=0.0):
+    out = home / "autotest"
+    result = out / "result.txt"
+    print("--- result")
+    print(result.read_text() if result.exists() else "(no result.txt)")
+    log = out / "validation.log"
+    if log.exists():
+        counts = collections.Counter(re.findall(r"VUID-[A-Za-z0-9_-]+|UNASSIGNED-[A-Za-z0-9_-]+|Undefined-Value-[A-Za-z0-9_-]+", log.read_text(errors="replace")))
+        print("--- validation", {k: v for k, v in counts.most_common(14)}, "new:", sorted(set(counts) - BASELINE)[:14])
+    latest = home / "logs" / "latest.log"
+    if latest.exists():
+        lines = latest.read_text(errors="replace").splitlines()
+        picked = [line[:330] for line in lines if re.search(r"/(ERROR|FATAL)\]|Exception in|Caused by", line) and "Error loading" not in line]
+        print("--- log errors:", len(picked))
+        print("\n".join(picked[:30]))
+    crash = sorted((home / "crash-reports").glob("*.txt"), key=lambda path: path.stat().st_mtime)[-1:] if (home / "crash-reports").exists() else []
+    if crash and crash[0].stat().st_mtime > started:
+        print("--- CRASH", crash[0])
+        print("\n".join(crash[0].read_text(errors="replace").splitlines()[:60]))
 
 
 def library_path(home, entry):
@@ -131,7 +181,11 @@ def run(name, args):
             if allowed(entry):
                 # A later entry replaces the same library of another version, as the launcher does.
                 seen[":".join(entry["name"].split(":")[:2] + entry["name"].split(":")[3:])] = library_path(home, entry)
-    classpath = list(seen.values()) + [client]
+    # Under the version's own name, which is what ignoreList keeps out of the module layer: the patched game comes from libraries.
+    named = home / "versions" / f"neoforge-{NEOFORGE}" / f"neoforge-{NEOFORGE}.jar"
+    if not named.exists():
+        shutil.copy2(client, named)
+    classpath = list(seen.values()) + [named]
     substitutions = {
         "${library_directory}": str(home / "libraries"),
         "${classpath_separator}": separator,
@@ -202,14 +256,16 @@ def run(name, args):
     # The launcher hands the vanilla arguments that take a value in pairs; a feature flag lost its value with fill().
     (out / "command.txt").write_text("\n".join(command))
     console = open(out / "console.log", "w", encoding="utf-8")
+    started = time.time()
     code = subprocess.call(command, cwd=home, env=env, stdout=console, stderr=subprocess.STDOUT)
     print("exit code", code)
+    summarise(home, started)
     return code
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("action", choices=["create", "run"])
+    parser.add_argument("action", choices=["create", "install", "run"])
     parser.add_argument("name")
     parser.add_argument("--pack")
     parser.add_argument("--options", default="")
@@ -223,6 +279,8 @@ def main():
     args = parser.parse_args()
     if args.action == "create":
         create(args.name)
+    elif args.action == "install":
+        install(args.name)
     else:
         sys.exit(run(args.name, args))
 
