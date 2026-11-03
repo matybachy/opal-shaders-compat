@@ -79,6 +79,7 @@ public final class AutoTest {
 	private State state = State.START;
 	private int waitTicks;
 	private boolean settling;
+	private boolean scriptScreen;
 	private long settleStartFrame;
 	private int idleTicks;
 	private int settleTicks;
@@ -130,6 +131,8 @@ public final class AutoTest {
 	}
 
 	private void advance(Minecraft mc) {
+		// A screen the script did not ask for is someone at the window; it would be in every picture from here on.
+		if (mc.screen != null && !this.scriptScreen) mc.setScreen(null);
 		if (this.settling) {
 			this.settleTicks++;
 			boolean busy = WorldRenderer.getInstance().hasPendingSectionWork();
@@ -216,13 +219,16 @@ public final class AutoTest {
 				PackRenderer.reload();
 			}
 			case "reload" -> PackRenderer.reload();
-			case "screen" -> mc.setScreen(switch (rest) {
+			case "screen" -> {
+				this.scriptScreen = !rest.equals("close");
+				mc.setScreen(switch (rest) {
 				case "video" -> new VOptionScreen(Component.literal("Video Setting"), null);
 				case "packs" -> new ShaderPackScreen(null);
 				case "options" -> new net.minecraft.client.gui.screens.options.OptionsScreen(null, mc.options);
 				case "close" -> null;
 				default -> newScreen(mc, rest);
-			});
+				});
+			}
 			// A left click in GUI coordinates, or on the first widget whose text holds the words.
 			case "click" -> click(mc, Double.parseDouble(args[0]), Double.parseDouble(args[1]), args.length > 2 ? Integer.parseInt(args[2]) : 0);
 			case "press" -> {

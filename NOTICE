@@ -25,6 +25,7 @@ follow in their headers; none of them copies its code:
   src/main/java/dev/vitrailvk/render/DrawIds.java
   src/main/java/dev/vitrailvk/render/TextureImages.java
   src/main/java/dev/vitrailvk/mixin/ItemInHandRendererMixin.java
+  src/main/java/dev/vitrailvk/render/PassBuffers.java
 
 VulkanMod Reforged, https://github.com/TrulyRin/VulkanMod-Reforged
 GNU Lesser General Public License version 3

@@ -7,6 +7,7 @@ import dev.vitrailvk.render.PackRenderer;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.vulkanmod.config.gui.ModSettingsEntry;
@@ -22,6 +23,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /**
  * Shaders as a page of VulkanMod Reforged's video settings, through the registry it keeps for other mods: on or off, which
@@ -33,6 +36,8 @@ public final class ShaderPages {
 
 	private static SwitchOption enabled;
 	private static CyclingOption<String> pack;
+	private static Function<Screen, Screen> listScreen = ShaderPackScreen::new;
+	private static BiFunction<Screen, String, Screen> settingsScreen;
 
 	private ShaderPages() {
 	}
@@ -42,6 +47,15 @@ public final class ShaderPages {
 				() -> ResourceLocation.fromNamespaceAndPath(VitrailVk.MOD_ID, "icon.png"),
 				ShaderPages::pages,
 				ShaderPages::apply));
+	}
+
+	/**
+	 * For a mod with screens of its own over the same selection and {@code shaderpacks/<pack>.txt}: what the page's buttons open.
+	 * The settings function gets the screen to come back to and the pack, and answers null where it cannot read that pack.
+	 */
+	public static void screens(Function<Screen, Screen> list, BiFunction<Screen, String, Screen> settings) {
+		listScreen = list;
+		settingsScreen = settings;
 	}
 
 	private static List<OptionPage> pages() {
@@ -57,7 +71,7 @@ public final class ShaderPages {
 		Option<?> settings = new ActionOption(Component.translatable("vitrailvk.page.settings"), () -> Component.translatable("vitrailvk.page.open"),
 				() -> openSettings(pack.getNewValue())).setActivationFn(() -> packs.length > 0 && !packs[0].isEmpty());
 		Option<?> list = new ActionOption(Component.translatable("vitrailvk.page.list"), () -> Component.translatable("vitrailvk.page.open"),
-				() -> Minecraft.getInstance().setScreen(new ShaderPackScreen(Minecraft.getInstance().screen)));
+				() -> Minecraft.getInstance().setScreen(listScreen.apply(Minecraft.getInstance().screen)));
 		Option<?> folder = new ActionOption(Component.translatable("vitrailvk.screen.folder"), () -> Component.translatable("vitrailvk.page.open"),
 				ShaderPages::openFolder);
 		Option<?> status = new ActionOption(Component.translatable("vitrailvk.page.status"), ShaderPages::status, null);
@@ -108,8 +122,12 @@ public final class ShaderPages {
 
 	private static void openSettings(String name) {
 		Minecraft minecraft = Minecraft.getInstance();
-		ShaderPackScreen list = new ShaderPackScreen(minecraft.screen);
-		list.openSettings(minecraft, name);
+		Screen settings = settingsScreen != null ? settingsScreen.apply(minecraft.screen, name) : null;
+		if (settings != null) {
+			minecraft.setScreen(settings);
+		} else {
+			new ShaderPackScreen(minecraft.screen).openSettings(minecraft, name);
+		}
 	}
 
 	private static void openFolder() {

@@ -2,12 +2,19 @@ package dev.vitrailbridge.opal;
 
 import dev.opal.client.Opal;
 import dev.opal.client.OpalClient;
+import dev.opal.client.ShaderOptionsScreen;
+import dev.opal.client.ShaderPackScreen;
 import dev.opal.config.OpalConfig;
+import dev.opal.pack.OptionValues;
+import dev.opal.pack.PackSource;
+import dev.opal.pack.ShaderPack;
 import dev.vitrail.Vitrail;
 import dev.vitrail.settings.SettingsFile;
 import dev.vitrailbridge.VitrailBridge;
 import dev.vitrailvk.pack.ShaderPacks;
 import dev.vitrailvk.render.PackRenderer;
+import dev.vitrailvk.screen.ShaderPages;
+import net.minecraft.client.gui.screens.Screen;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -37,7 +44,19 @@ final class VitrailLink {
 		tellOpal(seen);
 		settingsTime = settingsTime(seen);
 		started = true;
+		// Opal's screens look like Vectors' and work on the same files, so with Opal there they are the pack screens everywhere.
+		ShaderPages.screens(ShaderPackScreen::new, VitrailLink::opalSettings);
 		NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, event -> tick());
+	}
+
+	private static Screen opalSettings(Screen parent, String pack) {
+		Path directory = FMLPaths.GAMEDIR.get().resolve("shaderpacks");
+		try {
+			return new ShaderOptionsScreen(parent, new ShaderPack(PackSource.open(directory.resolve(pack)), OptionValues.load(directory.resolve(pack + ".txt"))));
+		} catch (IOException | RuntimeException e) {
+			VitrailBridge.LOGGER.warn("Opal cannot read the settings of {}", pack, e);
+			return null;
+		}
 	}
 
 	/** Called on Opal's request to load; see {@code OpalOnVulkanMixin}. */

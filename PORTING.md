@@ -19,7 +19,8 @@ v části Výsledky Fáze 2.
 | 7 GUI výběru packu a nastavení | hotovo v kódu |
 | A Flywheel, Create | záchranná varianta hotová v kódu: Flywheel off, Create přes BER; vlastní backend ne |
 | B Ostatní mody včetně Mekanismu | hotovo v kódu: mapování podle tabulky Iris, bajtkód zkontrolovaný |
-| C Distant Horizons včetně `dh_*` | hotovo v kódu: vlastní definice renderu DH na Vulkanu |
+| C Distant Horizons včetně `dh_*` | hotovo, běželo ve hře s LODy, viz Výsledky na Vulkanu |
+| D Vitrail Bridge: Opal a Vectors na VMR, společné GUI | hotovo, běželo ve hře, viz níže |
 
 **Obnova 2. 11. 2026:** původní složka `vulkan-shaders` i s lokální git historií (M1–M5) zmizela
 z disku (nebyla ani v Koši). Projekt byl obnoven z konverzace a stejných revizí referencí, historie
@@ -28,8 +29,10 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
 ## Jak buildnout a spustit
 
 - Java 21: systémový `JAVA_HOME` na tomhle PC ukazuje na JDK 8. Nastav `C:\Program Files\Zulu\zulu-21`.
-- `./gradlew build`: `build/libs/vitrailvk-<verze>.jar`. VMR se při prvním buildu stáhne do `libs/` a ověří se
-  jeho SHA-256 (`gradle.properties`).
+- `./gradlew build`: `build/libs/vitrailvk-<verze>.jar` a `bridge/build/libs/vitrailbridge-<verze>.jar`. VMR se při prvním
+  buildu stáhne do `libs/` a ověří se jeho SHA-256 (`gradle.properties`).
+- `scripts/release.py "text"`: po commitu a buildu ověří metadata obou jarů, porovná třídy s jary, na kterých běžely testy,
+  a zkopíruje je do `release/` se zápisem do `release/LATEST.txt`.
 - `./gradlew checkPacks [-Ppacks=...] [-PdumpAll=true]`: bez hry přeloží a zkompiluje všechny programy packů
   v `run/shaderpacks`, včetně rodin meshů tak, jak je načítá renderer (entity, obloha, částice, `shadow_entities`),
   grafických `shadowcomp` a compute. Kontroluje i to, že každý vstup vertexu má zdroj. Dřív u cesty s `.csh` i `.fsh`
@@ -38,8 +41,12 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
   [-Pautotest.time=6000]`: build, klient v autotest režimu, souhrn. Výstupy jsou v `run/autotest/`.
 - `scripts/instance.py create|run NAME`: čistá instance s NeoForge v `test-instance/NAME` (mimo git, jary do `mods/`),
   bez dev runu. `run` umí `--pack`, `--options`, `--script`, `--camera`, `--time`. Výstupy v `test-instance/NAME/autotest`.
-- Skript autotestu (`--script`, řádky: `cmd`, `wait`, `settle`, `shot`, `dump`, `fps`, `gui`, `graphics`, `resize`,
-  `minimize`, `restore`, `pack`, `reload`, `screen`, `click`, `press`, `error`, `note`, `quit`), viz `dev/AutoTest`.
+- `scripts/instance.py install NAME [--renderer gl] [--extra DIR]`: čerstvé jary, volitelně bez VMR a Vitrailu, a jary
+  z `test-instance/jars/DIR`. Běh na OpenGL ovládá `dev/GlAutoTest` v bridgi se stejnými vlastnostmi a skripty.
+- Skript autotestu (`--script`, řádky: `cmd`, `wait`, `settle`, `shot`, `dump`, `fps`, `gui`, `slot`, `graphics`, `resize`,
+  `minimize`, `restore`, `pack`, `reload`, `screen`, `click`, `press`, `error`, `note`, `quit`), viz `dev/AutoTest`. Scény jsou
+  v `scripts/scenes/`. Okno testu je normální okno: obrazovku, kterou skript neotevřel, autotest zavírá, ale pohyb myší do
+  výsledku promluví dál.
   `dump` uloží všechny targety aktuálního packu jako PNG (`render/TargetDump`).
 - `scripts/glscan.py jar...`: přímá volání GL v bajtkódu modu, i ve vnořených jarech.
 - `./gradlew checkPacks -PdhVariant=true`: všechno s definovaným `DISTANT_HORIZONS`; programy `dh_*` se tak kontrolují vždy.
@@ -48,10 +55,80 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
   úpravy v `PackProgram`, `ShaderProperties` a `TargetPlan` (značené `VitrailVK:`), znovu je pak dopiš ručně.
 - `-Pvalidation=false` vypne validation layers (`tools/vvl`, Khronos nightly, mimo git).
 
-Pack se vybírá ve hře: video nastavení VMR, vlevo dole **Shader packy...** (uloží se do
+Pack se vybírá ve hře: video nastavení VMR, skupina **Shadery** vlevo (uloží se do
 `config/vitrailvk.properties`, klíč `shaderPack`). Nastavení packu jsou v `shaderpacks/<pack>.txt`, stejném souboru
 jako u Iris. Systémové vlastnosti `vitrailvk.pack`, `vitrailvk.profile` a `vitrailvk.options` (autotest) mají přednost,
 dokud se pack nevybere ve hře.
+
+## Vitrail Bridge (`bridge/`, od 3. 11. 2026)
+
+Samostatný klientský mod `vitrailbridge`, na všem nepovinný. Samostatný proto, že druhá půlka jeho práce platí bez VMR a Vitrail VK
+na VMR závisí napevno; a kód, který sahá do Opalu (licence „UNDECIDED“), je tak odděleně od LGPL kódu Vitrailu. Z Opalu ani Vectors
+se nic nekopíruje: `bridge/src/stubs` jen pojmenovává volané členy pro kompilaci a do jaru nejde.
+
+**Instalace na Vulkan:** VMR, `vitrailvk`, `vitrailbridge`, Opal, Vectors, LibLibLib, NeoForge alespoň 21.1.259 (to chce Opal).
+`create-dyn-light` ne, viz `BLOCKERS.md`.
+
+**Proč Opal na VMR nekreslí.** První log: Opal se rozjel přes GL emulaci VMR, `glTexImage2D` hloubkové textury spadl
+(`Invalid texture source byte size`) a za minutu `VK_ERROR_DEVICE_LOST`. V `GlFunctionRegistry` jsou `glDrawBuffers`,
+`glBindImageTexture`, `glDispatchCompute` a `glTexImage3D` prázdné, takže jeho pipeline tam stát nemůže. `OpalOnVulkanMixin` ruší
+`Opal.rebuild`, pipeline nikdy nevznikne a všechny jeho háky jsou prázdné. Jeho obrazovky a klávesy zůstaly: `VitrailLink` drží
+výběr obou modů stejný a `Opal.requestReload` po změně výběru nebo souboru nastavení načte pack ve Vitrailu. Bez Vitrailu se
+ohlásí `OpalClient.conflict` a shadery nejsou.
+
+**„Too many custom images“.** Druhý log, Opal na OpenGL: dává každému obrázku napevno jednotku a bere jich nejvýš 7, tvůj Complementary
+Unbound + Euphoria má 8 (`Opal custom images` v logu). `OpalImagesMixin` limit ruší a `CustomImageUnits` přiděluje jednotky podle
+programu při každém navázání, jako Iris. Ověřeno: Opal + Vectors na OpenGL, ten pack, `opal_active=true`.
+
+**GUI.** Základ je registr `ModSettingsRegistry`, který na to VMR má. `ShaderPages` (Vitrail VK): zapnuto, pack, nastavení, seznam,
+složka, stav; projeví se po Použít. `VectorsPages` (bridge): stránky Zátěž a Ladění, slova a rozsahy z obrazovky Vectors, bez
+voleb terénního rendereru OpenGL. S Opalem vedou tlačítka do jeho obrazovek, ty mají vzhled Vectors. Vectors dostal stránku VulkanMod
+a z obrazovky Options zmizela jejich dvě tlačítka navíc. `VectorsOnVulkanMixin`: Vectors počítá Opal jako shader mod a vypínal by
+limity, které tady dávají smysl.
+
+**Terén.** `TerrainFormat` se rozhodoval dřív, než byl mod zkonstruován, takže mimo testy (kde pack dává `-D`) končil vypnutý
+a pack by chtěl restart. Teď se ptá na složku `shaderpacks`: je-li v ní pack, je mesh rozšířený a zapnutí za běhu nic nechce.
+
+## Výsledky na Vulkanu (3. 11. 2026)
+
+NeoForge 21.1.265, RTX 5060 Ti, validation layers, okno 854x480, čerstvé jary. Pack je Complementary Unbound + Euphoria Patches
+s nastavením z tvé instance, není-li řečeno jinak.
+
+| Test | Výsledek |
+|---|---|
+| VMR, Vitrail, bridge, Opal, Vectors: start, svět | funguje, první log se neopakuje |
+| Mraky | fungují po opravě níže |
+| Ruka, očarovaný meč, pochodeň, truhla, cedule, banner, táborák, oheň, mobové | fungují po opravě níže |
+| Západ slunce, noc, déšť, jeskyně, pod vodou, obrys bloku | fungují, validace čistá |
+| Změna velikosti okna, minimalizace | fungují, validace čistá |
+| BSL, Complementary Reimagined, Bliss: scéna `world3` | běží, log čistý; z obrázků prohlédnutý den |
+| Vypnutí, zapnutí, jiný pack z VMR i z Opalu, bez restartu | funguje |
+| Nastavení packu z Opalu: uložení, načtení znovu ve Vitrailu | funguje |
+| Přepínač Vectors na stránce VMR, Použít | uloží se do `vectors-1.21.1.json` |
+| Create 6.0.10 + addony: motor, hřídele, ozubená kola, pás, mixér, lis, vodní kolo, nádrž | kreslí se s packem a se stíny, `flywheel:off` z logu |
+| Create: mechanický píst jako kontrapce | jede, prkno i tyč se posouvají |
+| Mekanism 10.7.19 + addony: stroje, kostka, tanky, kabely, generátory, Atomic Disassembler v ruce | kreslí se s packem |
+| DH 3.3.3: LODy ve dne i v noci, přes `dh_*` | fungují |
+
+**Mraky, důkaz.** Debug režimy v kopii packu (výstup z `deferred1` do nepoužitého `colortex11`): noise v pořádku (`noisetex` i
+`GetCloudNoise` dávají strukturu), `z0` = 1, `cameraPosition.y` = 78, `cloudAlt1i` = 200. Vadný byl směr: `viewPos.z` > 0 na obloze
+a `nPlayerPos.y` = -0,91 při pohledu nahoru. Příčina: VMR dává `getDepthFar` = nekonečno a JOML staví takovou matici s epsilonem
+1e-6, takže `w` při hloubce 1 je záporné a obloha leží za kamerou. `GetVolumetricClouds` pak vrátí 0 hned na `maxPlaneDistance < 0`.
+Pokus přes injekci do `getDepthFar` nezabral: export mixinů ukázal handler VMR první a s návratem, proto `GameRendererDepthFarMixin`
+přesměrovává volání v `getProjectionMatrix`. Po opravě `w` = 1/510, `nPlayerPos.y` = +0,5 ve středu při pohledu 30° nahoru, `clouds.a` > 0.
+
+**Tvar matic.** Stejným měřením vyšlo `P[3][2]` = -0,2 místo -0,1. Export mixinů nemá nic pod `org/joml`, takže `Matrix4fM` z VMR se
+neaplikuje a matice jsou OpenGL [-1,1]. `forwardToReversed` z nich dělal 2z-w: near 0,1 a stíny entit s jinou hloubkou než terén.
+`glToReversed` publikuje matici beze změny, ruka násobí řádek z 0,125 jako Iris, DH má svůj objem ve stejném tvaru.
+
+**Fialová obloha s očarovaným mečem.** Obyčejný meč nic, očarovaný změní `colortex0` na obloze z (51,91,227) na (5,1,15), po schování
+zpět. Lesk natvrdo červeně v kopii packu zbarvil celou oblohu, takže ji kreslil program lesku. Příčina: vanilla volá
+`setShader(position)` (`LevelRenderer:962`), hned `renderSky` (`:963`) a ten bere `RenderSystem.getShader()` (`:1618`). Stínový průchod
+běží mezi tím, hráč v něm drží meč a poslední je typ `glint`; `Families.resolve` testuje `glint` před `Phase.SKY`. `LevelRendererMixin`
+shader po průchodu vrací.
+
+**„Not building!“.** Očarovaná věc v ruce pack rovnou shodila (záchrana na čistý VMR zafungovala): ruka a stíny měly `MultiBufferSource`
+s jedním sdíleným bufferem a lesk ukončil rozepsaný předmět. `PassBuffers` je sada jako ve vanille.
 
 ## Výsledky Fáze 2 (přerušeno limitem, 3. 11. 2026)
 
@@ -67,10 +144,7 @@ Běh v čisté instanci (`scripts/instance.py`, čerstvý jar, NeoForge 21.1.228
 Opraveno testem: `PackImage.upload` sahal na `GraphicsQueue.INSTANCE`, které VMR nikdy nenastaví (`DeviceManager.getGraphicsQueue()`).
 Zároveň se tím potvrdila záchrana: chyba packu skončila čistým VMR a textem v `lastError`.
 
-**Nespuštěno:** Complementary, Bliss (jen `checkPacks`), scény, Create, Mekanism, DH, GUI, regrese, FPS, Iris pro srovnání.
-Scény se píšou do `scripts/scenes/`. Pro Create, Mekanism a DH: `scripts/instance.py create NAME`, `install NAME`, jar modu
-z `test-instance/jars/` do `test-instance/NAME/mods/`. Compile ověřen: `checkPacks` i `-PdhVariant=true` čisté na BSL,
-Complementary a Bliss.
+Compile ověřen: `checkPacks` i `-PdhVariant=true` čisté na BSL, Complementary a Bliss. Co běželo potom, je v Výsledcích na Vulkanu.
 
 ## Rozhodnutí
 
@@ -89,12 +163,12 @@ Complementary a Bliss.
   VMR, jinak jejich bind zneplatní stav VMR.
 - **Orientace:** targety mají řádek 0 dole jako GL, bez flipu viewportu; `final` jde do swapchainu
   s flipem, `frontFace = CLOCKWISE` kvůli framebufferovým souřadnicím Vulkanu.
-- **Hloubka:** VMR kreslí forward 0..1. `LevelCapture.forwardToReversed` převádí projekci pro
-  `ViewMatrices`, konvence targetů je `ClipSpace.FORWARD`.
+- **Hloubka:** matice hry jsou ve tvaru OpenGL, packu se publikují beze změny (`LevelCapture.glToReversed` je převod pro
+  `ViewMatrices`), target má hloubku 0..1 přes `ClipSpace.FORWARD`, far je za běhu packu konečný jako u Iris.
 - **Vertex formát terénu:** `DrawBuffers.VERTEX_SIZE`/`POS_OFFSET` jsou `static final` a `QuadSorter`
   porovnává formát identitou, proto se při startu rozšiřuje přímo
-  `CustomVertexFormat.COMPRESSED_TERRAIN` (stride 40 B). **Zapnutí/vypnutí packu vyžaduje restart**,
-  přepnutí mezi packy ne. `dev/vitrail/glsl/SodiumVertex.java` je vlastní náhrada se stejným API.
+  `CustomVertexFormat.COMPRESSED_TERRAIN` (stride 40 B), je-li ve složce `shaderpacks` nějaký pack. `dev/vitrail/glsl/SodiumVertex.java`
+  je vlastní náhrada se stejným API.
 - **Pořadí snímku:** `beginLevel` → `beforeSky` (clear, begin, stín: terén, entity, kopie `shadowtex1`, průsvitné,
   `shadowcomp`, prepare) → obloha → neprůhledný terén → entity a BER → před první průsvitnou vrstvou kopie
   `depthtex2`, neprůhledná ruka, kopie `depthtex1` a deferred → průsvitné → mraky, počasí → na konci `renderLevel`
@@ -117,8 +191,8 @@ Complementary a Bliss.
 - **Pád packu:** výjimka při načítání i při kreslení vede na `report()`: pack se vypne, kreslí čistý VMR, toast, celý text
   chyby včetně diagnostiky shaderc na obrazovce Shader packy a tlačítko Kopírovat chybu. `PackRenderer.reload()` po
   změně přestaví i mesh (`allChanged`), protože `block.properties` je v něm, jako `Iris.reload`.
-- **Restart:** jen zapnutí z „bez packu“ při startu. Vypnutí a přepnutí jde za běhu: VMR čte prvních 20 B rozšířeného
-  vrcholu. Vždy rozšířený mesh by stál dvojnásobek paměti terénu i hráče, který pack nepoužívá.
+- **Restart:** jen když hra začala s prázdnou složkou `shaderpacks`. Jinak všechno za běhu: VMR čte prvních 20 B rozšířeného
+  vrcholu. Cena je dvojnásobek paměti terénu i pro hráče s vypnutým packem, když má nějaký nainstalovaný.
 - **Device features** (`DeviceManagerMixin`): `independentBlend`, `geometryShader`,
   `fragmentStoresAndAtomics`, storage image formáty a další, kde je GPU má.
 - **Mipmapy:** `colortexNMipmapEnabled` se generují blitem před passem, který je žádá, na straně, kterou
@@ -216,13 +290,13 @@ statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žád
 |---|---|---|
 | `LevelRendererMixin` | `renderLevel` (HEAD, před `renderSky`, před `RenderType.translucent()` ve 2 větvích, RETURN), `renderSky`, `renderClouds`, `renderSnowAndRain` | ano |
 | `GameRendererMixin` | `render`, `renderItemInHand` (obal, `renderHandsWithItems`, `renderScreenEffect`) | ano |
+| `GameRendererDepthFarMixin` | volání `getDepthFar` v `getProjectionMatrix` | ano |
 | `BufferUploaderMixin` | `_drawWithShader`, `draw` (order 1000, před `order = 2000` z VMR) | ano |
 | `BufferBuilderMixin`, `MeshDataMixin` | `beginVertex`, `build`, nové pole | ano |
 | `EntityRenderDispatcherMixin` | `render`, `renderFlame`, statické `renderShadow` | ano |
 | `BlockEntityRenderDispatcherMixin`, `ItemRendererMixin`, `ItemInHandRendererMixin`, `ParticleEngineMixin` | `render`, `render`, `renderArmWithItem`, `render` (5 argumentů) | ano |
 | `GameRendererAccessor`, `LevelRendererAccessor`, `TextureAtlasAccessor`, `BiomesMixin` | `getFov`, `bobHurt`, `bobView`, `renderHand`, `renderEntity`, statické `Biomes.register` | ano |
 | `VboMixin`, `VboAccessor` | `VBO.drawWithShader(..., ShaderInstance)`, pole `VBO` | ne |
-| `VOptionScreenMixin` | `VOptionScreen.addButtonsWithSearchBar`, pole `buttons` | ne |
 | `VulkanImageMixin` | statické `VulkanImage.transitionImageLayout(MemoryStack, VkCommandBuffer, VulkanImage, int)` | ne |
 | `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor` | ne |
 | `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | terén VMR | ne |
@@ -230,18 +304,21 @@ statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žád
 
 `@WrapMethod` a `@WrapOperation` potřebují MixinExtras 0.4+, NeoForge 21.1.228 nese 0.5.3 a VMR je používá také.
 
+Bridge má vlastní config s `required: false` a `@Pseudo`, změna cizího modu ho nesmí shodit: `OpalOnVulkanMixin` a
+`VectorsOnVulkanMixin` jen s VMR, `OpalImagesMixin`, `OpalImageMixin` a `FlywheelShaderPackMixin` jen bez něj.
+
 ## Neověřeno za běhu
 
-Pořadí k vyzkoušení při prvním spuštění (`-Pvalidation=true`, sledovat `run/autotest/validation.log`):
+Co běželo, je ve Výsledcích na Vulkanu. Vědomě vynechané nebo nespuštěné:
 
-1. Hra se spustí bez packu: start potvrdí mixiny, nové jsou `VboMixin`, `VboAccessor`, `RendererAccessor` a cíle Codexu.
-2. `test_terrain`: nic se nerozbilo oproti poslednímu běhu, validace jen baseline VMR.
-3. BSL s výchozími optiony, den, venku: obloha, slunce, mraky, stíny terénu, voda.
-4. Entity a ruka: nejsou černé, zásah zčervená, ruka nezajíždí do bloků; entity vrhají stín, blob pod nimi není.
-5. Obrys bloku, praskliny při kopání, hranice světa, částice, déšť, efekt ohně přes obraz, záře (glowing).
-6. `Fabulous` grafika a změna velikosti okna a minimalizace.
-7. Complementary a pack s custom texturami, image.*, SSBO; pack s grafickým `shadowcomp`.
-8. Sledovat v logu `no program of the pack serves it`, `could not be loaded`, `reads ... from the half it writes`.
+- Opal na OpenGL s Create, Mekanismem a DH: běžel jen s Opalem a Vectors, jedna scéna. `FlywheelShaderPackMixin` se ve hře nespustil
+  a Opal nemá programy `dh_*`. Rozhodnutí uživatele: stačí Vulkan.
+- Kombinace s chybějícím modem: VMR bez Vitrailu, bez Opalu, Vitrail bez bridge. Rozhodnutí uživatele: přeskočit.
+- Měření FPS a srovnání s Irisem: rozhodnutí uživatele. Mimochodem jediné číslo: pack a všechny mody s DH, 854x480, 80 FPS, 1 % low 36.
+- Jar VMR z instance uživatele se od toho z GitHubu liší (5e4b09e8, 20 537 547 B proti 61a1c215, 20 537 626 B), verze stejná. Testy běžely
+  na tom z GitHubu.
+- Velká scéna v Create, vytvořený multiblok v Mekanismu (dynamická nádrž stojí, formování neověřené), hranice světa, praskliny při kopání,
+  efekt ohně přes obraz, záře.
 
 Značky `TODO-VERIFY` v kódu nejsou. Ruka i stíny entit jsou ověřené proti `refs/Iris` (`pathways/HandRenderer`,
 `shadows/ShadowRenderer`): druhé vykreslení entit dělá Iris stejně, takže mod, kterému vadí, má stejný problém i pod Iris.
@@ -251,8 +328,11 @@ Při ověření opraveno: stíny entit řadí podle typu (méně dávek), berou 
 ## Známé problémy a omezení
 
 - Baseline validace VMR 0.3.5 bez našeho vlivu: `VUID-vkQueueSubmit-pSignalSemaphores-00067`,
-  `VUID-vkDestroyDevice-device-05137`.
+  `VUID-vkDestroyDevice-device-05137`. Další věci z VMR a modů v `BLOCKERS.md`.
 - Varování `Undefined-Value-ShaderOutputNotConsumed`: výstup `ofCoverage` z Vitrailu nemá attachment.
+  `Undefined-Value-OutputNotWritten` (1 až 2 u BSL a Bliss) není prověřené, na obraze se neprojevuje.
+- V noci s DH je na části oblohy fialový opar s ostřejší hranou. Posouvá se se světem, ne s obrazovkou, takže není z překrytí targetů;
+  jestli patří k packu, není ověřené. BSL má bílý horizont, u ostatních packů není.
 - Do stínu jdou jen sekce zkompilované grafem kamery, VMR jiné nemá.
 - `centerDepth` čte depth přímo, bez vyhlazení. `normals`/`specular` zatím neutrální, atlasy PBR se nenačítají.
 - Raw textury: packed, BGR, integer a rectangle zatím čtou černou. VBO s `transientGeometry` kreslí VMR.
@@ -261,7 +341,7 @@ Při ověření opraveno: stíny entit řadí podle typu (méně dávek), berou 
 
 ## Co zbývá
 
-1. Ověření za běhu, viz „Neověřeno za běhu“ a tabulka výsledků.
+1. Co je vyjmenované v „Neověřeno za běhu“.
 2. Případně: LOD bez packu, `dh_generic`, vlastní backend Flywheelu.
 
 ## Reference: Iris-Vulkan-Port
