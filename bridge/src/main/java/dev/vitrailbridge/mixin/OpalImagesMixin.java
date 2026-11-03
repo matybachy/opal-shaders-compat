@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * Opal gives each custom image of a pack one image unit for good, so it refuses a pack with more than seven: Complementary
- * Unbound with Euphoria Patches declares nine, though no program uses more than the eight units NVIDIA has. Here the count
+ * Unbound with Euphoria Patches has eight with its colored lighting on, and no program of it uses them all. Here the count
  * is not limited and units go per program, see {@link CustomImageUnits}.
  */
 @Pseudo

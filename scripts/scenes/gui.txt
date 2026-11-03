@@ -3,6 +3,7 @@ settle
 wait 40
 shot world
 dump world
+wait 10
 screen video
 wait 5
 shot gui_vulkan
@@ -24,6 +25,6 @@ shot gui_vectors
 screen packs
 wait 5
 shot gui_vitrail_packs
-screen net.minecraft.client.gui.screens.options.OptionsScreen
+screen close
 wait 5
 note end

@@ -632,6 +632,11 @@ public final class PackRenderer implements AutoCloseable {
 		return Optional.ofNullable(lastError);
 	}
 
+	/** Whether a pack draws the level: the frame's matrices are then the ones it expects. */
+	public static boolean packDraws() {
+		return active != null && !failedDuringFrame;
+	}
+
 	public static Optional<String> runningPack() {
 		return active == null || failedDuringFrame ? Optional.empty() : Optional.of(active.packName);
 	}
@@ -1331,10 +1336,10 @@ public final class PackRenderer implements AutoCloseable {
 			this.values.passAlphaTest(0.0F);
 			this.values.renderStage(opaque ? RenderStage.TERRAIN_SOLID : RenderStage.TERRAIN_TRANSLUCENT);
 			if (!light) {
-				// DH's volume: the frame's matrix with its own planes, forward over 0..1 like everything drawn here.
+				// DH's volume: the frame's matrix with its own planes, in the OpenGL form like every matrix handed in here.
 				Matrix4f projection = new Matrix4f(LevelCapture.projection());
-				projection.m22(far / (near - far));
-				projection.m32(far * near / (near - far));
+				projection.m22((far + near) / (near - far));
+				projection.m32(2.0F * far * near / (near - far));
 				projection.m02(0.0F);
 				projection.m12(0.0F);
 				this.values.modelView(LevelCapture.modelView(), IDENTITY);

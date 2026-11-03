@@ -1,7 +1,6 @@
 package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.vitrail.pack.source.ShadowCasters;
 import dev.vitrail.render.PackValues;
@@ -49,11 +48,11 @@ final class ShadowFeatures {
 		PoseStack poses = new PoseStack();
 		PackRenderer.pushPhase(Families.Phase.SHADOW);
 		modelView.pushMatrix();
-		try (ByteBufferBuilder storage = new ByteBufferBuilder(4096)) {
+		try {
 			modelView.set(view);
 			RenderSystem.applyModelViewMatrix();
 			mc.gameRenderer.resetProjectionMatrix(projection);
-			MultiBufferSource.BufferSource buffers = MultiBufferSource.immediate(storage);
+			MultiBufferSource.BufferSource buffers = PassBuffers.source();
 			if (casters.entities() || casters.player()) {
 				List<Entity> entities = new ArrayList<>();
 				for (Entity entity : casters.entities() ? mc.level.entitiesForRendering() : withRiders(mc.player)) {

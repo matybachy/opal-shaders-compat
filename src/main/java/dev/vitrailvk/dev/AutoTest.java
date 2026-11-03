@@ -202,6 +202,7 @@ public final class AutoTest {
 				this.lastFrame = 0;
 			}
 			case "gui" -> mc.options.hideGui = !Boolean.parseBoolean(rest);
+			case "slot" -> mc.player.getInventory().selected = Integer.parseInt(rest);
 			case "distance" -> mc.options.renderDistance().set(Integer.parseInt(rest));
 			case "graphics" -> {
 				mc.options.graphicsMode().set(GraphicsStatus.valueOf(rest.toUpperCase(Locale.ROOT)));
@@ -218,6 +219,7 @@ public final class AutoTest {
 			case "screen" -> mc.setScreen(switch (rest) {
 				case "video" -> new VOptionScreen(Component.literal("Video Setting"), null);
 				case "packs" -> new ShaderPackScreen(null);
+				case "options" -> new net.minecraft.client.gui.screens.options.OptionsScreen(null, mc.options);
 				case "close" -> null;
 				default -> newScreen(mc, rest);
 			});

@@ -6,6 +6,7 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "OpalOnVulkanMixin",
+    "VectorsOnVulkanMixin",
     "OpalImagesMixin",
     "OpalImageMixin",
     "FlywheelShaderPackMixin"

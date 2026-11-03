@@ -5,8 +5,10 @@ import org.joml.Matrix4fc;
 
 /**
  * The matrices the level is drawn with this frame, captured from the arguments of
- * {@code LevelRenderer.renderLevel}. On VulkanMod Reforged the projection is forward Z over 0..1
- * ({@code Matrix4fM} forces {@code zZeroToOne}); the model view is the camera rotation only.
+ * {@code LevelRenderer.renderLevel}. The projection is the OpenGL form, z from -1 to 1. VulkanMod Reforged's
+ * {@code Matrix4fM} would force 0..1, but it never applies on NeoForge: JOML is loaded outside the transformer, and a
+ * mixin export of a running game has nothing under {@code org/joml}. Its far plane is one a pack can use while one draws
+ * ({@code GameRendererDepthFarMixin}). The model view is the camera rotation only.
  */
 public final class LevelCapture {
 
@@ -30,16 +32,16 @@ public final class LevelCapture {
 	}
 
 	/**
-	 * Rewrites a forward 0..1 matrix as the reversed 0..1 one Vitrail's {@code ViewMatrices} expects:
-	 * the z row becomes {@code rowW - rowZ}. Vitrail's {@code ClipSpace.toLegacyDepth} then yields
-	 * {@code 2 * rowZ - rowW}, the OpenGL form, exactly.
+	 * Rewrites an OpenGL form matrix as the reversed 0..1 one Vitrail's {@code ViewMatrices} expects: the z row
+	 * becomes {@code (rowW - rowZ) / 2}. Vitrail's {@code ClipSpace.toLegacyDepth}, {@code rowW - 2 * rowZ}, then
+	 * gives back the matrix this was handed, so a pack reads what it would read under Iris.
 	 */
-	public static Matrix4f forwardToReversed(Matrix4fc forward, Matrix4f dest) {
-		float m02 = forward.m03() - forward.m02();
-		float m12 = forward.m13() - forward.m12();
-		float m22 = forward.m23() - forward.m22();
-		float m32 = forward.m33() - forward.m32();
-		dest.set(forward);
+	public static Matrix4f glToReversed(Matrix4fc gl, Matrix4f dest) {
+		float m02 = (gl.m03() - gl.m02()) * 0.5F;
+		float m12 = (gl.m13() - gl.m12()) * 0.5F;
+		float m22 = (gl.m23() - gl.m22()) * 0.5F;
+		float m32 = (gl.m33() - gl.m32()) * 0.5F;
+		dest.set(gl);
 		dest.m02(m02);
 		dest.m12(m12);
 		dest.m22(m22);

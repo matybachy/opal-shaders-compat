@@ -1,7 +1,6 @@
 package dev.vitrailvk.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.vitrail.render.HandDraw;
 import dev.vitrailvk.mixin.GameRendererAccessor;
@@ -45,16 +44,16 @@ public final class HandPass {
 	}
 
 	/**
-	 * The projection the hand is drawn under. Iris scales clip z by 0.125 in GL's -1..1 range, which puts
-	 * the hand's window depth into 0.4375..0.5625, and packs test for that range ({@code depth < 0.56}).
-	 * VulkanMod's matrices are forward 0..1, where the same depth is {@code z' = 0.125 z + 0.4375 w}.
+	 * The projection the hand is drawn under. Iris scales clip z by 0.125 in GL's -1..1 range, the range the
+	 * game's matrices are in here, which puts the hand's window depth into 0.4375..0.5625, and packs test for
+	 * that range ({@code depth < 0.56}).
 	 */
 	private static Matrix4f handProjection(GameRenderer game, GameRendererAccessor access, Camera camera, float tick) {
 		Matrix4f m = new Matrix4f(game.getProjectionMatrix(access.vitrailvk$getFov(camera, tick, false)));
-		m.m02(0.125F * m.m02() + 0.4375F * m.m03());
-		m.m12(0.125F * m.m12() + 0.4375F * m.m13());
-		m.m22(0.125F * m.m22() + 0.4375F * m.m23());
-		m.m32(0.125F * m.m32() + 0.4375F * m.m33());
+		m.m02(0.125F * m.m02());
+		m.m12(0.125F * m.m12());
+		m.m22(0.125F * m.m22());
+		m.m32(0.125F * m.m32());
 		return m;
 	}
 
@@ -76,12 +75,12 @@ public final class HandPass {
 		HandDraw.drawing(true);
 		PackRenderer.pushPhase(Families.Phase.HAND);
 		modelView.pushMatrix();
-		try (ByteBufferBuilder storage = new ByteBufferBuilder(1536)) {
+		try {
 			game.resetProjectionMatrix(handProjection);
 			modelView.set(poses.last().pose());
 			RenderSystem.applyModelViewMatrix();
 			game.lightTexture().turnOnLightLayer();
-			MultiBufferSource.BufferSource buffers = MultiBufferSource.immediate(storage);
+			MultiBufferSource.BufferSource buffers = PassBuffers.source();
 			game.itemInHandRenderer.renderHandsWithItems(tick, new PoseStack(), buffers, mc.player,
 					mc.getEntityRenderDispatcher().getPackedLightCoords(camera.getEntity(), tick));
 		} finally {

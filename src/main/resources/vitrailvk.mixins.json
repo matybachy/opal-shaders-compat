@@ -11,6 +11,7 @@
     "LevelRendererMixin",
     "LevelRendererAccessor",
     "GameRendererMixin",
+    "GameRendererDepthFarMixin",
     "GameRendererAccessor",
     "ItemInHandRendererMixin",
     "ParticleEngineMixin",

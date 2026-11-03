@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Each mixin applies where what it is for is in the game: {@code OpalOnVulkan} with Opal on VulkanMod Reforged, the rest of
- * {@code Opal} and {@code Flywheel} with Opal as the renderer, on OpenGL.
+ * Each mixin applies where what it is for is in the game: {@code OpalOnVulkan} and {@code VectorsOnVulkan} on VulkanMod
+ * Reforged, the rest of {@code Opal} and {@code Flywheel} with Opal as the renderer, on OpenGL.
  */
 public final class BridgeMixinPlugin implements IMixinConfigPlugin {
 
@@ -41,6 +41,7 @@ public final class BridgeMixinPlugin implements IMixinConfigPlugin {
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
 		String mixin = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
 		if (mixin.startsWith("OpalOnVulkan")) return Mods.OPAL && Mods.VULKAN;
+		if (mixin.startsWith("VectorsOnVulkan")) return Mods.VECTORS && Mods.VULKAN;
 		return Mods.OPAL && !Mods.VULKAN;
 	}
 

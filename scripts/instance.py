@@ -110,6 +110,12 @@ BASELINE = {"VUID-vkQueueSubmit-pSignalSemaphores-00067", "VUID-vkDestroyDevice-
 def summarise(home, started=0.0):
     out = home / "autotest"
     result = out / "result.txt"
+    errors = sorted((home / "logs").glob("latest.log")) if (home / "logs").exists() else []
+    for log in errors:
+        loading = [line[:300] for line in log.read_text(errors="replace").splitlines() if "ModLoadingIssue" in line or "Missing or unsupported mandatory" in line or "requires " in line and "or above" in line]
+        if loading:
+            print("--- mod loading:")
+            print("\n".join(loading[:12]))
     print("--- result")
     print(result.read_text() if result.exists() else "(no result.txt)")
     log = out / "validation.log"
@@ -284,7 +290,14 @@ def run(name, args):
     (out / "command.txt").write_text("\n".join(command))
     console = open(out / "console.log", "w", encoding="utf-8")
     started = time.time()
-    code = subprocess.call(command, cwd=home, env=env, stdout=console, stderr=subprocess.STDOUT)
+    process = subprocess.Popen(command, cwd=home, env=env, stdout=console, stderr=subprocess.STDOUT)
+    # The autotest's watchdog only starts with the mods; a game stuck on the mod loading error screen never gets that far.
+    try:
+        code = process.wait(int(args.timeout) + 120)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        code = process.wait()
+        print("killed: still running after the timeout")
     print("exit code", code)
     summarise(home, started)
     return code
