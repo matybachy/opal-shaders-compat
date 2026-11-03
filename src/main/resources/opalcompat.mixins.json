@@ -1,0 +1,41 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.opalcompat.mixin",
+  "plugin": "dev.opalcompat.mixin.OpalCompatMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "RendererMixin",
+    "VulkanImageMixin",
+    "TextureAtlasAccessor",
+    "LevelRendererMixin",
+    "LevelRendererAccessor",
+    "GameRendererMixin",
+    "GameRendererDepthFarMixin",
+    "GameRendererAccessor",
+    "ItemInHandRendererMixin",
+    "ParticleEngineMixin",
+    "BufferUploaderMixin",
+    "BufferBuilderMixin",
+    "MeshDataMixin",
+    "VboMixin",
+    "VboAccessor",
+    "RendererAccessor",
+    "EntityRenderDispatcherMixin",
+    "ItemRendererMixin",
+    "BlockEntityRenderDispatcherMixin",
+    "CustomVertexFormatMixin",
+    "TerrainBufferBuilderMixin",
+    "WorldRendererMixin",
+    "WorldRendererAccessor",
+    "DrawBuffersAccessor",
+    "DrawParametersAccessor",
+    "BiomesMixin",
+    "DeviceManagerMixin",
+    "DhDependencySetupMixin",
+    "DhMainMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

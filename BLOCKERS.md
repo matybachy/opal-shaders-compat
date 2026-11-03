@@ -20,11 +20,11 @@ test `graphics fabulous`), objeví se `VUID-vkCmdDrawIndexed-imageLayout-00344`,
 ## `VUID-vkResetCommandBuffer-commandBuffer-00045`
 
 Vzácná hláška (2 z asi 20 běhů), jeden výskyt krátce po startu. `vkResetCommandBuffer` volá jen VMR
-(`Renderer.java:265`, `CommandPool.java:150`, `Vulkan.java:444`), Vitrail VK ho nevolá. Bez viditelných následků.
+(`Renderer.java:265`, `CommandPool.java:150`, `Vulkan.java:444`), Opal Compat ho nevolá. Bez viditelných následků.
 
 ## `Matrix4fM` ve VMR se na NeoForge neaplikuje
 
 Mixin do `org.joml.Matrix4f` má vynutit hloubku 0..1, ale JOML se nenačítá přes transformer: export mixinů
 (`-Dmixin.debug.export=true`) nemá nic pod `org/joml`. Matice jsou ve tvaru OpenGL [-1,1] a VMR jim ořezává polovinu rozsahu
-hloubky (near vychází 0,1 místo 0,05). Vitrail VK s tím teď počítá. Kdyby VMR tohle opravil, `LevelCapture.glToReversed`
+hloubky (near vychází 0,1 místo 0,05). Opal Compat s tím teď počítá. Kdyby VMR tohle opravil, `LevelCapture.glToReversed`
 se musí upravit.

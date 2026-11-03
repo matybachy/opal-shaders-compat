@@ -1,6 +1,6 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/render/storage/package-info.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
+// Unchanged unless marked with a "OpalCompat:" comment.
 /**
  * The storage a pack's programs write into rather than draw into: the images its {@code image.}
  * lines declare, the buffers its {@code bufferObject.} lines declare, and the encoder work that

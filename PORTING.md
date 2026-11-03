@@ -3,6 +3,9 @@
 Deník portu: stav, rozhodnutí, známé problémy a původ převzatého kódu. Výchozí analýza je
 v [ANALYSIS.md](ANALYSIS.md).
 
+Mod se do verze 0.3.0 jmenoval Vitrail VK a vedle něj byl Vitrail Bridge. Od 0.4.0 je to jeden mod `opalcompat`, na přání uživatele.
+Starší commity, tagy a jary v `release/` nesou stará jména. Převzatý kód z Vitrailu zůstává v `dev/vitrail` a jeho původ je v `NOTICE`.
+
 ## Stav
 
 Pozor: „hotovo v kódu“ znamená přeloženo a staticky ověřeno proti zdrojům, ne funkční. Co opravdu běželo ve hře, je
@@ -20,7 +23,7 @@ v části Výsledky Fáze 2.
 | A Flywheel, Create | záchranná varianta hotová v kódu: Flywheel off, Create přes BER; vlastní backend ne |
 | B Ostatní mody včetně Mekanismu | hotovo v kódu: mapování podle tabulky Iris, bajtkód zkontrolovaný |
 | C Distant Horizons včetně `dh_*` | hotovo, běželo ve hře s LODy, viz Výsledky na Vulkanu |
-| D Vitrail Bridge: Opal a Vectors na VMR, společné GUI | hotovo, běželo ve hře, viz níže |
+| D Opal Compat: Opal a Vectors na VMR, společné GUI | hotovo, běželo ve hře, viz níže |
 
 **Obnova 2. 11. 2026:** původní složka `vulkan-shaders` i s lokální git historií (M1–M5) zmizela
 z disku (nebyla ani v Koši). Projekt byl obnoven z konverzace a stejných revizí referencí, historie
@@ -29,10 +32,10 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
 ## Jak buildnout a spustit
 
 - Java 21: systémový `JAVA_HOME` na tomhle PC ukazuje na JDK 8. Nastav `C:\Program Files\Zulu\zulu-21`.
-- `./gradlew build`: `build/libs/vitrailvk-<verze>.jar` a `bridge/build/libs/vitrailbridge-<verze>.jar`. VMR se při prvním
-  buildu stáhne do `libs/` a ověří se jeho SHA-256 (`gradle.properties`).
-- `scripts/release.py "text"`: po commitu a buildu ověří metadata obou jarů, porovná třídy s jary, na kterých běžely testy,
-  a zkopíruje je do `release/` se zápisem do `release/LATEST.txt`.
+- `./gradlew build`: `build/libs/opalcompat-<verze>.jar`. VMR se při prvním buildu stáhne do `libs/` a ověří se jeho SHA-256
+  (`gradle.properties`).
+- `scripts/release.py "text"`: po commitu a buildu ověří metadata jaru, porovná třídy s jarem, na kterém běžely testy, a zkopíruje
+  ho do `release/` se zápisem do `release/LATEST.txt`.
 - `./gradlew checkPacks [-Ppacks=...] [-PdumpAll=true]`: bez hry přeloží a zkompiluje všechny programy packů
   v `run/shaderpacks`, včetně rodin meshů tak, jak je načítá renderer (entity, obloha, částice, `shadow_entities`),
   grafických `shadowcomp` a compute. Kontroluje i to, že každý vstup vertexu má zdroj. Dřív u cesty s `.csh` i `.fsh`
@@ -41,8 +44,8 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
   [-Pautotest.time=6000]`: build, klient v autotest režimu, souhrn. Výstupy jsou v `run/autotest/`.
 - `scripts/instance.py create|run NAME`: čistá instance s NeoForge v `test-instance/NAME` (mimo git, jary do `mods/`),
   bez dev runu. `run` umí `--pack`, `--options`, `--script`, `--camera`, `--time`. Výstupy v `test-instance/NAME/autotest`.
-- `scripts/instance.py install NAME [--renderer gl] [--extra DIR]`: čerstvé jary, volitelně bez VMR a Vitrailu, a jary
-  z `test-instance/jars/DIR`. Běh na OpenGL ovládá `dev/GlAutoTest` v bridgi se stejnými vlastnostmi a skripty.
+- `scripts/instance.py install NAME [--renderer gl] [--extra DIR]`: čerstvý jar, volitelně bez VMR, a jary
+  z `test-instance/jars/DIR`. Běh na OpenGL ovládá `compat/GlAutoTest` se stejnými vlastnostmi a skripty.
 - Skript autotestu (`--script`, řádky: `cmd`, `wait`, `settle`, `shot`, `dump`, `fps`, `gui`, `slot`, `graphics`, `resize`,
   `minimize`, `restore`, `pack`, `reload`, `screen`, `click`, `press`, `error`, `note`, `quit`), viz `dev/AutoTest`. Scény jsou
   v `scripts/scenes/`. Okno testu je normální okno: obrazovku, kterou skript neotevřel, autotest zavírá, ale pohyb myší do
@@ -52,27 +55,28 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
 - `./gradlew checkPacks -PdhVariant=true`: všechno s definovaným `DISTANT_HORIZONS`; programy `dh_*` se tak kontrolují vždy.
 - `scripts/pixel.py soubor.png x,y ...`: hodnoty pixelů bez závislostí.
 - `scripts/take_from_vitrail.py`: převzetí skupiny a z Vitrailu do `src/main/java/dev/vitrail`. **Pozor:** přepsal by
-  úpravy v `PackProgram`, `ShaderProperties` a `TargetPlan` (značené `VitrailVK:`), znovu je pak dopiš ručně.
+  úpravy v `PackProgram`, `ShaderProperties` a `TargetPlan` (značené `OpalCompat:`), znovu je pak dopiš ručně.
 - `-Pvalidation=false` vypne validation layers (`tools/vvl`, Khronos nightly, mimo git).
 
 Pack se vybírá ve hře: video nastavení VMR, skupina **Shadery** vlevo (uloží se do
-`config/vitrailvk.properties`, klíč `shaderPack`). Nastavení packu jsou v `shaderpacks/<pack>.txt`, stejném souboru
-jako u Iris. Systémové vlastnosti `vitrailvk.pack`, `vitrailvk.profile` a `vitrailvk.options` (autotest) mají přednost,
+`config/opalcompat.properties`, klíč `shaderPack`). Nastavení packu jsou v `shaderpacks/<pack>.txt`, stejném souboru
+jako u Iris. Systémové vlastnosti `opalcompat.pack`, `opalcompat.profile` a `opalcompat.options` (autotest) mají přednost,
 dokud se pack nevybere ve hře.
 
-## Vitrail Bridge (`bridge/`, od 3. 11. 2026)
+## Opal, Vectors a VMR (balík `compat`, od 3. 11. 2026)
 
-Samostatný klientský mod `vitrailbridge`, na všem nepovinný. Samostatný proto, že druhá půlka jeho práce platí bez VMR a Vitrail VK
-na VMR závisí napevno; a kód, který sahá do Opalu (licence „UNDECIDED“), je tak odděleně od LGPL kódu Vitrailu. Z Opalu ani Vectors
-se nic nekopíruje: `bridge/src/stubs` jen pojmenovává volané členy pro kompilaci a do jaru nejde.
+Všechno je jeden klientský mod, na VMR, Opalu i Vectors nepovinný. Vulkanová část startuje z `VulkanSide` jen s VMR ve hře a její
+mixiny s ním (`OpalCompatMixinPlugin`), bez něj běží jen část pro Opal na OpenGL. Z Opalu ani Vectors se nic nekopíruje: `src/stubs` jen
+pojmenovává volané členy pro kompilaci a do jaru nejde. Staré jary `vitrailvk` a `vitrailbridge` jsou v `neoforge.mods.toml` nekompatibilní,
+hra řekne, ať je odstraníš.
 
-**Instalace na Vulkan:** VMR, `vitrailvk`, `vitrailbridge`, Opal, Vectors, LibLibLib, NeoForge alespoň 21.1.259 (to chce Opal).
-`create-dyn-light` ne, viz `BLOCKERS.md`.
+**Instalace na Vulkan:** VMR, `opalcompat`, Opal, Vectors, LibLibLib, NeoForge alespoň 21.1.259 (to chce Opal). `create-dyn-light` ne,
+viz `BLOCKERS.md`.
 
 **Proč Opal na VMR nekreslí.** První log: Opal se rozjel přes GL emulaci VMR, `glTexImage2D` hloubkové textury spadl
 (`Invalid texture source byte size`) a za minutu `VK_ERROR_DEVICE_LOST`. V `GlFunctionRegistry` jsou `glDrawBuffers`,
 `glBindImageTexture`, `glDispatchCompute` a `glTexImage3D` prázdné, takže jeho pipeline tam stát nemůže. `OpalOnVulkanMixin` ruší
-`Opal.rebuild`, pipeline nikdy nevznikne a všechny jeho háky jsou prázdné. Jeho obrazovky a klávesy zůstaly: `VitrailLink` drží
+`Opal.rebuild`, pipeline nikdy nevznikne a všechny jeho háky jsou prázdné. Jeho obrazovky a klávesy zůstaly: `OpalLink` drží
 výběr obou modů stejný a `Opal.requestReload` po změně výběru nebo souboru nastavení načte pack ve Vitrailu. Bez Vitrailu se
 ohlásí `OpalClient.conflict` a shadery nejsou.
 
@@ -80,8 +84,8 @@ ohlásí `OpalClient.conflict` a shadery nejsou.
 Unbound + Euphoria má 8 (`Opal custom images` v logu). `OpalImagesMixin` limit ruší a `CustomImageUnits` přiděluje jednotky podle
 programu při každém navázání, jako Iris. Ověřeno: Opal + Vectors na OpenGL, ten pack, `opal_active=true`.
 
-**GUI.** Základ je registr `ModSettingsRegistry`, který na to VMR má. `ShaderPages` (Vitrail VK): zapnuto, pack, nastavení, seznam,
-složka, stav; projeví se po Použít. `VectorsPages` (bridge): stránky Zátěž a Ladění, slova a rozsahy z obrazovky Vectors, bez
+**GUI.** Základ je registr `ModSettingsRegistry`, který na to VMR má. `ShaderPages`: zapnuto, pack, nastavení, seznam,
+složka, stav; projeví se po Použít. `VectorsPages`: stránky Zátěž a Ladění, slova a rozsahy z obrazovky Vectors, bez
 voleb terénního rendereru OpenGL. S Opalem vedou tlačítka do jeho obrazovek, ty mají vzhled Vectors. Vectors dostal stránku VulkanMod
 a z obrazovky Options zmizela jejich dvě tlačítka navíc. `VectorsOnVulkanMixin`: Vectors počítá Opal jako shader mod a vypínal by
 limity, které tady dávají smysl.
@@ -96,7 +100,8 @@ s nastavením z tvé instance, není-li řečeno jinak.
 
 | Test | Výsledek |
 |---|---|
-| VMR, Vitrail, bridge, Opal, Vectors: start, svět | funguje, první log se neopakuje |
+| VMR, `opalcompat`, Opal, Vectors: start, svět | funguje, první log se neopakuje |
+| Jen VMR a `opalcompat`, bez Opalu a Vectors | funguje (0.4.0) |
 | Mraky | fungují po opravě níže |
 | Ruka, očarovaný meč, pochodeň, truhla, cedule, banner, táborák, oheň, mobové | fungují po opravě níže |
 | Západ slunce, noc, déšť, jeskyně, pod vodou, obrys bloku | fungují, validace čistá |
@@ -148,8 +153,8 @@ Compile ověřen: `checkPacks` i `-PdhVariant=true` čisté na BSL, Complementar
 
 ## Rozhodnutí
 
-- **Mod id `vitrailvk`, balík `dev.vitrailvk`**; převzatý kód zůstává v `dev.vitrail.*` s hlavičkou
-  o původu, úpravy jsou označené `VitrailVK:`.
+- **Mod id `opalcompat`, balík `dev.opalcompat`**; převzatý kód zůstává v `dev.vitrail.*` s hlavičkou
+  o původu, úpravy jsou označené `OpalCompat:`.
 - **VMR jako release jar** (`libs/`, SHA-256 z releasu `mc-1.21.1-0618965`), žádný fork; závislost na
   přesné verzi, protože mixiny sahají do interních tříd VMR.
 - **Validation layers přes Vulkan loader** (`VK_ADD_LAYER_PATH`, `VK_INSTANCE_LAYERS`), protože
@@ -240,14 +245,14 @@ odkládá vodu, sestaví seznam pro stín bez frustum kamery a bez packu kreslí
 vlastní `dhDepthTex0` a kopie `dhDepthTex1` před vodou, forward jako všechno ostatní, řádek projekce z rovin DH.
 Vrchol 16 B (`DistantVertex`), corner sekce přes dynamický offset jednoho UBO, jedna sada na půlku, jeden indexový buffer.
 `DISTANT_HORIZONS` se definuje jen s aktivním bridgem. Bez forku a bez závislosti při běhu: `libs/` je jen `compileOnly`,
-mixiny aplikuje `VitrailVkMixinPlugin` jen pro přesnou verzi 3.3.3 a bez `-Dvitrailvk.dh=false`. Bez packu se LOD
+mixiny aplikuje `OpalCompatMixinPlugin` jen pro přesnou verzi 3.3.3 a bez `-Dopalcompat.dh=false`. Bez packu se LOD
 nekreslí (`dh_` program není), mraky a majáky DH (`dh_generic`) také ne.
 
 ## Práce Codexu (větev `codex-work`, revize `39fd05e`)
 
 Import doslova je commit `bed96bd`, opravy jsou zvlášť. Zip neměl `.git`, ale stál přímo na `b65080c`, takže rozdíl
-stromů je celá práce. Jar `vitrailvk-0.1.0-alpha.jar` je bajt po bajtu shodný ve všech třídách s buildem těchto
-zdrojů, liší se jen konce řádků v `vitrailvk.mixins.json`; o funkčnosti nic neříká.
+stromů je celá práce. Jar `opalcompat-0.1.0-alpha.jar` je bajt po bajtu shodný ve všech třídách s buildem těchto
+zdrojů, liší se jen konce řádků v `opalcompat.mixins.json`; o funkčnosti nic neříká.
 
 **Přijato:** oprava `:jar` v `build.gradle`, `HandPass` (dvě fáze ruky podle Iris), `MixedMesh` a `DrawIds`
 (identita vrcholů), `ShadowFeatures`, grafické `shadowcomp` s vlastními flipy (shoda s Iris ověřena),
@@ -304,7 +309,7 @@ statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žád
 
 `@WrapMethod` a `@WrapOperation` potřebují MixinExtras 0.4+, NeoForge 21.1.228 nese 0.5.3 a VMR je používá také.
 
-Bridge má vlastní config s `required: false` a `@Pseudo`, změna cizího modu ho nesmí shodit: `OpalOnVulkanMixin` a
+Balík `compat` má vlastní config s `required: false` a `@Pseudo`, změna cizího modu ho nesmí shodit: `OpalOnVulkanMixin` a
 `VectorsOnVulkanMixin` jen s VMR, `OpalImagesMixin`, `OpalImageMixin` a `FlywheelShaderPackMixin` jen bez něj.
 
 ## Neověřeno za běhu
@@ -313,7 +318,8 @@ Co běželo, je ve Výsledcích na Vulkanu. Vědomě vynechané nebo nespuštěn
 
 - Opal na OpenGL s Create, Mekanismem a DH: běžel jen s Opalem a Vectors, jedna scéna. `FlywheelShaderPackMixin` se ve hře nespustil
   a Opal nemá programy `dh_*`. Rozhodnutí uživatele: stačí Vulkan.
-- Kombinace s chybějícím modem: VMR bez Vitrailu, bez Opalu, Vitrail bez bridge. Rozhodnutí uživatele: přeskočit.
+- Běh bez VMR po sloučení do jednoho modu: naposledy běžel ještě jako dva jary. Teď je ověřené jen staticky (`scripts/release.py` hlídá,
+  že vstupní třídy a část pro OpenGL nejmenují třídy VMR). Rozhodnutí uživatele: testy na OpenGL ne.
 - Měření FPS a srovnání s Irisem: rozhodnutí uživatele. Mimochodem jediné číslo: pack a všechny mody s DH, 854x480, 80 FPS, 1 % low 36.
 - Jar VMR z instance uživatele se od toho z GitHubu liší (5e4b09e8, 20 537 547 B proti 61a1c215, 20 537 626 B), verze stejná. Testy běžely
   na tom z GitHubu.
@@ -362,7 +368,7 @@ takže z transformační části nic nepřebíráme. Cílí na Fabric a vlastní
 - Vlastní náhrady Vitrailových souborů: `glsl/GameTransforms`, `glsl/SodiumVertex`, `render/FrameState`
   (port na 1.21.1), `FaceShading`, `HandDraw`, `ShadowTargets`, `PackImages`.
 - Úpravy ve Vitrailu po převzetí: `PackProgram.loadShadowComposites`, `ShaderProperties.viewportScales`, poznámka
-  v `TargetPlan` (Codex, značené `VitrailVK:`).
+  v `TargetPlan` (Codex, značené `OpalCompat:`).
 - Podle chování Iris 1.21.1 (LGPL-3.0), bez kopie kódu, viz [NOTICE](NOTICE): `HandPass`, `ShadowFeatures`, `DrawIds`,
   `ItemInHandRendererMixin`, `TextureImages`, `Families`, flipy v `ShadowMaps`.
 - Licence LGPL-3.0-only, `NOTICE-vitrail` je beze změny.

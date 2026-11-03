@@ -12,6 +12,10 @@ base {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// Opal and Vectors are not on a public Maven repository. What this mod calls of them is declared in src/stubs,
+// compiled against and left out of the jar; at run time their own classes answer.
+sourceSets.main.java.srcDir 'src/stubs/java'
+
 // VulkanMod Reforged: the release jar, fetched once and verified. See gradle.properties.
 def vulkanModJar = file("libs/VulkanMod-Reforged-${project.vulkanmod_version}.jar")
 if (!vulkanModJar.isFile()) {
@@ -30,7 +34,7 @@ if (!vulkanModJar.isFile()) {
     tmp.renameTo(vulkanModJar)
 }
 
-// Distant Horizons: compiled against, never shipped. The bridge in dev.vitrailvk.dh stands in for its internal
+// Distant Horizons: compiled against, never shipped. The bridge in dev.opalcompat.dh stands in for its internal
 // renderer classes, so this is the one version it knows (see DhSupport).
 def distantHorizonsJar = file("libs/DistantHorizons-${project.dh_version}-fabric-neoforge.jar")
 if (!distantHorizonsJar.isFile()) {
@@ -63,7 +67,7 @@ neoForge {
     runs {
         configureEach {
             systemProperty 'forge.logging.markers', 'REGISTRIES'
-            systemProperty 'vitrailvk.reportAll', providers.gradleProperty('reportAll').getOrElse('false')
+            systemProperty 'opalcompat.reportAll', providers.gradleProperty('reportAll').getOrElse('false')
             logLevel = org.slf4j.event.Level.DEBUG
             if (validationEnabled) {
                 environment 'VK_ADD_LAYER_PATH', validationDir.absolutePath
@@ -82,13 +86,13 @@ neoForge {
         // result.txt, and quits. -Pautotest.frames / -Pautotest.pack / -Pautotest.options / -Pautotest.camera.
         autotest {
             client()
-            systemProperty 'vitrailvk.autotest', 'true'
-            systemProperty 'vitrailvk.autotest.frames', providers.gradleProperty('autotest.frames').getOrElse('120')
-            systemProperty 'vitrailvk.autotest.camera', providers.gradleProperty('autotest.camera').getOrElse('0,0,135,20,14')
-            systemProperty 'vitrailvk.autotest.time', providers.gradleProperty('autotest.time').getOrElse('6000')
-            systemProperty 'vitrailvk.pack', providers.gradleProperty('autotest.pack').getOrElse('')
-            systemProperty 'vitrailvk.options', providers.gradleProperty('autotest.options').getOrElse('')
-            systemProperty 'vitrailvk.autotest.out', autotestDir.absolutePath
+            systemProperty 'opalcompat.autotest', 'true'
+            systemProperty 'opalcompat.autotest.frames', providers.gradleProperty('autotest.frames').getOrElse('120')
+            systemProperty 'opalcompat.autotest.camera', providers.gradleProperty('autotest.camera').getOrElse('0,0,135,20,14')
+            systemProperty 'opalcompat.autotest.time', providers.gradleProperty('autotest.time').getOrElse('6000')
+            systemProperty 'opalcompat.pack', providers.gradleProperty('autotest.pack').getOrElse('')
+            systemProperty 'opalcompat.options', providers.gradleProperty('autotest.options').getOrElse('')
+            systemProperty 'opalcompat.autotest.out', autotestDir.absolutePath
         }
     }
 
@@ -134,12 +138,12 @@ tasks.register('checkPacks', JavaExec) {
     description = 'Translates and compiles every program of the packs in run/shaderpacks.'
     dependsOn tasks.named('classes')
     classpath = files(sourceSets.main.output.classesDirs, sourceSets.main.output.resourcesDir) + configurations.packTool
-    mainClass = 'dev.vitrailvk.compile.PackCompileTool'
+    mainClass = 'dev.opalcompat.compile.PackCompileTool'
     args file('run').absolutePath, providers.gradleProperty('packs').getOrElse('')
     systemProperty 'org.slf4j.simpleLogger.defaultLogLevel', providers.gradleProperty('logLevel').getOrElse('info')
     systemProperty 'org.slf4j.simpleLogger.showDateTime', 'false'
-    systemProperty 'vitrailvk.dumpAll', providers.gradleProperty('dumpAll').getOrElse('false')
-    systemProperty 'vitrailvk.dhVariant', providers.gradleProperty('dhVariant').getOrElse('false')
+    systemProperty 'opalcompat.dumpAll', providers.gradleProperty('dumpAll').getOrElse('false')
+    systemProperty 'opalcompat.dhVariant', providers.gradleProperty('dhVariant').getOrElse('false')
 }
 
 def resourceProps = [
@@ -165,6 +169,7 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 jar {
+    exclude 'dev/opal/**', 'dev/vector/**'
     from(layout.projectDirectory.file('LICENSE')) { rename { "${it}_${project.mod_id}" } }
     from(layout.projectDirectory.file('COPYING')) { rename { "${it}_${project.mod_id}" } }
     from(layout.projectDirectory.file('NOTICE')) { rename { "${it}_${project.mod_id}" } }

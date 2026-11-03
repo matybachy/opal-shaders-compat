@@ -2,11 +2,11 @@
 """A clean NeoForge client outside the dev run, for testing the built jar.
 
   scripts/instance.py create NAME          install NeoForge into test-instance/NAME
-  scripts/instance.py install NAME         the freshly built jars, VulkanMod Reforged and the test packs into it
+  scripts/instance.py install NAME         the freshly built jar, VulkanMod Reforged and the test packs into it
   scripts/instance.py run NAME [options]   start it with what is in its mods/ folder, then summarise the run
 
 Options of run:
-  --pack NAME      shader pack (vitrailvk.pack)
+  --pack NAME      shader pack (opalcompat.pack)
   --options A=b,C=d
   --script FILE    an autotest script (see AutoTest); without one, the plain autotest
   --camera x,z,yaw,pitch,height
@@ -17,7 +17,7 @@ Options of run:
   --jvm ARG        one more JVM argument, repeatable
 
 Options of install:
-  --renderer gl    without VulkanMod Reforged and Vitrail VK
+  --renderer gl    without VulkanMod Reforged
   --extra DIR      every jar of test-instance/jars/DIR too, repeatable
 
 Output goes to test-instance/NAME/autotest. The Java is Zulu 21 from JAVA_HOME or the usual place.
@@ -74,19 +74,17 @@ def newest(directory, pattern):
 
 
 def install(name, renderer="vulkan", extra=()):
-    """The freshly built jars. renderer "gl" leaves VulkanMod Reforged and Vitrail VK out of the instance."""
+    """The freshly built jar. renderer "gl" leaves VulkanMod Reforged out of the instance."""
     home = instance(name)
     mods = home / "mods"
     mods.mkdir(exist_ok=True)
-    for pattern in ("vitrailvk-*.jar", "vitrailbridge-*.jar", "VulkanMod-Reforged-*.jar"):
+    for pattern in ("opalcompat-*.jar", "vitrailvk-*.jar", "vitrailbridge-*.jar", "VulkanMod-Reforged-*.jar"):
         for old in mods.glob(pattern):
             old.unlink()
-    built = newest(ROOT / "bridge" / "build" / "libs", "vitrailbridge-*.jar")
+    built = newest(ROOT / "build" / "libs", "opalcompat-*.jar")
     shutil.copy2(built, mods)
     print("installed", built.name)
     if renderer == "vulkan":
-        built = newest(ROOT / "build" / "libs", "vitrailvk-*.jar")
-        shutil.copy2(built, mods)
         for library in (ROOT / "libs").glob("VulkanMod-Reforged-*.jar"):
             shutil.copy2(library, mods)
     for directory in extra:
@@ -224,7 +222,7 @@ def run(name, args):
         "${classpath}": separator.join(str(p) for p in classpath),
         "${version_name}": f"neoforge-{neoforge_version}",
         "${natives_directory}": str(home / "natives"),
-        "${launcher_name}": "vitrailvk-test",
+        "${launcher_name}": "opalcompat-test",
         "${launcher_version}": "1",
         "${auth_player_name}": "Tester",
         "${game_directory}": str(home),
@@ -260,17 +258,16 @@ def run(name, args):
     jvm = ["-Xmx6G", "-XX:+UseG1GC"]
     env = dict(os.environ)
     if not args.no_autotest:
-        jvm += ["-Dvitrailvk.autotest=true", f"-Dvitrailvk.autotest.out={out}"]
-        jvm.append(f"-Dvitrailvk.autotest.camera={args.camera}")
-        jvm.append(f"-Dvitrailvk.autotest.time={args.time}")
-        jvm.append(f"-Dvitrailvk.autotest.timeout={args.timeout}")
+        jvm += ["-Dopalcompat.autotest=true", f"-Dopalcompat.autotest.out={out}"]
+        jvm.append(f"-Dopalcompat.autotest.camera={args.camera}")
+        jvm.append(f"-Dopalcompat.autotest.time={args.time}")
+        jvm.append(f"-Dopalcompat.autotest.timeout={args.timeout}")
         if args.script:
-            jvm.append(f"-Dvitrailvk.autotest.script={pathlib.Path(args.script).resolve()}")
+            jvm.append(f"-Dopalcompat.autotest.script={pathlib.Path(args.script).resolve()}")
     if args.pack is not None:
-        jvm.append(f"-Dvitrailvk.pack={args.pack}")
-        jvm.append(f"-Dvitrailbridge.autotest.pack={args.pack}")
+        jvm.append(f"-Dopalcompat.pack={args.pack}")
     if args.options:
-        jvm.append(f"-Dvitrailvk.options={args.options}")
+        jvm.append(f"-Dopalcompat.options={args.options}")
     jvm += args.jvm or []
     validation = ROOT / "tools" / "vvl"
     log = out / "validation.log"
@@ -316,7 +313,7 @@ def main():
     parser.add_argument("--no-validation", action="store_true")
     parser.add_argument("--no-autotest", action="store_true")
     parser.add_argument("--jvm", action="append")
-    parser.add_argument("--renderer", choices=["vulkan", "gl"], default="vulkan", help="install: without VulkanMod Reforged and Vitrail VK")
+    parser.add_argument("--renderer", choices=["vulkan", "gl"], default="vulkan", help="install: without VulkanMod Reforged")
     parser.add_argument("--extra", action="append", default=[], help="install: every jar of test-instance/jars/EXTRA too")
     args = parser.parse_args()
     if args.action == "create":

@@ -1,6 +1,6 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/uniform/package-info.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
+// Unchanged unless marked with a "OpalCompat:" comment.
 /**
  * The values a pack reads, and the block they are written into.
  * <p>

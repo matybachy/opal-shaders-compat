@@ -1,4 +1,4 @@
-// VitrailVK: stand-in for Vitrail's PackImages (custom textures a pack ships, texture.<stage>.<name>
+// OpalCompat: stand-in for Vitrail's PackImages (custom textures a pack ships, texture.<stage>.<name>
 // in shaders.properties). A pack gets none yet and the note says so. LGPL-3.0.
 package dev.vitrail.render;
 

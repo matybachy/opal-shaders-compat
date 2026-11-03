@@ -1,7 +1,7 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/pack/source/ShaderProperties.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
-// VitrailVK: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
+// Unchanged unless marked with a "OpalCompat:" comment.
+// OpalCompat: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
 package dev.vitrail.pack.source;
 
 import dev.vitrail.pack.option.OptionIndex;
@@ -1611,7 +1611,7 @@ public final class ShaderProperties {
 		return directives;
 	}
 
-	// VitrailVK: Iris's indirect.<stem> = <buffer> <byte offset>, by which a compute takes its counts from a buffer.
+	// OpalCompat: Iris's indirect.<stem> = <buffer> <byte offset>, by which a compute takes its counts from a buffer.
 	public Map<String, long[]> indirectPointers(Map<String, String> defines) {
 		Map<String, long[]> pointers = new LinkedHashMap<>();
 		for (Matcher line : live(Pattern.compile("^\\s*indirect\\.([^=\\s]+)\\s*=\\s*(\\d+)\\s+(\\d+)\\s*$"), defines)) {
@@ -1620,7 +1620,7 @@ public final class ShaderProperties {
 		return pointers;
 	}
 
-	// VitrailVK: preserve live scale directives for the Vulkan fullscreen viewport.
+	// OpalCompat: preserve live scale directives for the Vulkan fullscreen viewport.
 	public Map<String, String> viewportScales(Map<String, String> defines) {
 		Map<String, String> scales = new LinkedHashMap<>();
 		for (Matcher line : live(Pattern.compile("^\\s*scale\\.([^=\\s]+)\\s*=\\s*(.*)$"), defines)) {

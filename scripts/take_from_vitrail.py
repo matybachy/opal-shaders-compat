@@ -3,7 +3,7 @@ adaptations 1.21.1 needs. Usage: python -I scripts/take_from_vitrail.py   (from 
 
 Group "a" of ANALYSIS.md: files that import nothing of the game, of Sodium, of Mixin or of the Vulkan
 bindings, directly or through another Vitrail file. A few "boundary" files are added by name.
-Files VitrailVK replaces (written by hand, see PORTING.md) are never overwritten.
+Files OpalCompat replaces (written by hand, see PORTING.md) are never overwritten.
 """
 import os
 import re
@@ -19,7 +19,7 @@ OWN = {'dev/vitrail/glsl/SodiumVertex.java', 'dev/vitrail/glsl/GameTransforms.ja
        'dev/vitrail/render/FrameState.java', 'dev/vitrail/render/FaceShading.java',
        'dev/vitrail/render/HandDraw.java', 'dev/vitrail/render/ShadowTargets.java',
        'dev/vitrail/render/PackImages.java'}
-MARK = '// Unchanged unless marked with a "VitrailVK:" comment.\n'
+MARK = '// Unchanged unless marked with a "OpalCompat:" comment.\n'
 
 
 def classify():
@@ -138,7 +138,7 @@ def main():
         header = ('// Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit %s,\n'
                   '// common/src/main/java/%s. LGPL-3.0, see NOTICE and NOTICE-vitrail.\n' % (COMMIT, rel)) + MARK
         for note in notes:
-            header += '// VitrailVK: ' + note + '\n'
+            header += '// OpalCompat: ' + note + '\n'
         target = os.path.join(DST, rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, 'w', encoding='utf-8', newline='') as out:

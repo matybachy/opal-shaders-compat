@@ -1,4 +1,4 @@
-// VitrailVK: the constant Vitrail's ShadowTargets carries and PackValues reads. LGPL-3.0.
+// OpalCompat: the constant Vitrail's ShadowTargets carries and PackValues reads. LGPL-3.0.
 package dev.vitrail.render;
 
 import dev.vitrail.pack.target.PackDirectives;

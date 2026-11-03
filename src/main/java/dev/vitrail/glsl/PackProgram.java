@@ -1,7 +1,7 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/glsl/PackProgram.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
-// VitrailVK: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
+// Unchanged unless marked with a "OpalCompat:" comment.
+// OpalCompat: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
 package dev.vitrail.glsl;
 
 import dev.vitrail.pack.option.OptionIndex;
@@ -399,7 +399,7 @@ public final class PackProgram {
 		}
 	}
 
-	// VitrailVK: shadow composites have their own target schedule and must not enter the main chain.
+	// OpalCompat: shadow composites have their own target schedule and must not enter the main chain.
 	/** Translates the enabled shadow composite graphics programs of this place in slot order. */
 	public static Map<String, Loaded> loadShadowComposites(OpenedPack pack, String place) throws IOException {
 		ShaderPackSource source = pack.source();

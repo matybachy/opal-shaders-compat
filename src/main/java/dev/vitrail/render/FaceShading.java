@@ -1,4 +1,4 @@
-// VitrailVK: stand-in for Vitrail's FaceShading (common/src/main/java/dev/vitrail/render/FaceShading.java),
+// OpalCompat: stand-in for Vitrail's FaceShading (common/src/main/java/dev/vitrail/render/FaceShading.java),
 // which switches Sodium's per-face shading in the chunk mesh. Here only the pack's request is kept. LGPL-3.0.
 package dev.vitrail.render;
 
