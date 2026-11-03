@@ -19,7 +19,10 @@ import net.minecraft.world.level.GameType;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
 
-/** Two hand submissions around the deferred stage, following Iris's 1.21.1 ordering. */
+/**
+ * Two hand submissions around the deferred stage. Follows Iris 1.21.1 ({@code pipeline/HandRenderer}):
+ * when it runs, what it draws in which of the two, how the pose is built. LGPL-3.0, see NOTICE.
+ */
 public final class HandPass {
 	private static boolean active;
 	private static boolean solid;

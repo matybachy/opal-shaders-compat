@@ -9,6 +9,7 @@ import dev.vitrail.pack.texture.PackTextures;
 import dev.vitrail.pack.texture.RawImage;
 import dev.vitrail.pack.texture.VolumeAtlas;
 import dev.vitrail.uniform.NoiseTexture;
+import dev.vitrailvk.VitrailVk;
 import dev.vitrailvk.vk.PackImage;
 import dev.vitrailvk.vk.Vk;
 import net.minecraft.client.Minecraft;
@@ -25,7 +26,11 @@ import java.util.Map;
 
 import static org.lwjgl.vulkan.VK10.*;
 
-/** Files named by texture.* and customTexture.*, with the same override rules as translation. */
+/**
+ * Files named by texture.* and customTexture.*, with the same override rules as translation. That game
+ * textures are fetched at each bind follows Iris 1.21.1 ({@code pipeline/CustomTextureManager}).
+ * LGPL-3.0, see NOTICE.
+ */
 final class TextureImages implements AutoCloseable {
 
 	private final PackTextures declared;
@@ -35,7 +40,6 @@ final class TextureImages implements AutoCloseable {
 	private final PackImage blackLine;
 	private final PackImage blackVolume;
 
-	// TODO-VERIFY: verify pack textures, atlas rewrites, 1D lookup sampling and resource reloads in game.
 	TextureImages(OpenedPack pack) throws IOException {
 		this.declared = PackTextures.read(pack.properties(), pack.settings().globalDefines(pack.options()), pack.source());
 		this.black = upload(2, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, new byte[4], false, true);
@@ -45,7 +49,13 @@ final class TextureImages implements AutoCloseable {
 			Map<String, VolumeAtlas> atlases = this.declared.volumes();
 			for (PackTexture texture : this.declared.supplied()) {
 				if (texture.gameResource()) continue;
-				Path file = pack.source().file(texture.path()).orElseThrow(() -> new IOException("Missing texture " + texture.path()));
+				// What cannot be read reads as black (resolve), as Iris goes on without it: one lookup table
+				// should not cost the whole pack.
+				Path file = pack.source().file(texture.path()).orElse(null);
+				if (file == null) {
+					VitrailVk.LOGGER.warn("[pack] texture {} is missing", texture.path());
+					continue;
+				}
 				PackImage image;
 				if (texture.png()) {
 					NoiseTexture.Image decoded = NoiseTexture.decode(pack.source().bytes(file));
@@ -64,10 +74,16 @@ final class TextureImages implements AutoCloseable {
 						boolean line = raw.shape() == PackTexture.Shape.TEXTURE_1D;
 						PackTexture.Raw flat = line ? new PackTexture.Raw(PackTexture.Shape.TEXTURE_2D,
 								raw.internalFormat(), raw.sizeX(), 1, 0, raw.pixelFormat(), raw.pixelType()) : raw;
-						// TODO-VERIFY: add packed/BGR/integer conversion and rectangle coordinates; fail instead of misinterpreting bytes.
-						if (!RawImage.serves(flat)) throw new IOException("Unsupported raw texture: " + texture.describe());
+						// Packed, BGR and integer texels and rectangle coordinates have no conversion yet.
+						if (!RawImage.serves(flat)) {
+							VitrailVk.LOGGER.warn("[pack] raw texture not served, it reads as black: {}", texture.describe());
+							continue;
+						}
 						RawImage data = RawImage.of(flat);
-						if (!data.fits()) throw new IOException("Raw texture too large: " + texture.path());
+						if (!data.fits()) {
+							VitrailVk.LOGGER.warn("[pack] raw texture too large, it reads as black: {}", texture.path());
+							continue;
+						}
 						image = upload(line ? 1 : 2, data.width(), data.height(), format(data.type()),
 								data.widen(pack.source().head(file, raw.bytes())), texture.blur(), texture.clamp());
 					}

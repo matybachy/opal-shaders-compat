@@ -12,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+/** Which hand goes in which of the two passes ({@link HandPass}). Iris's rule, by the item held. */
 @Mixin(ItemInHandRenderer.class)
 public abstract class ItemInHandRendererMixin {
 	@Inject(method = "renderArmWithItem", at = @At("HEAD"), cancellable = true)

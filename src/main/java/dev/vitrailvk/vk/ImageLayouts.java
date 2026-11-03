@@ -13,7 +13,6 @@ public final class ImageLayouts {
 	private ImageLayouts() {
 	}
 
-	// TODO-VERIFY: validate storage write visibility between compute and graphics on live devices.
 	public static void transition(MemoryStack stack, VkCommandBuffer cmd, VulkanImage image, int layout) {
 		int old = image.getCurrentLayout();
 		// GENERAL -> GENERAL still needs a dependency for consecutive imageStore dispatches.

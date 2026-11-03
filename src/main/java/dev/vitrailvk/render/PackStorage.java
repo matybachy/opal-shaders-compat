@@ -36,7 +36,6 @@ final class PackStorage implements AutoCloseable {
 		this.bufferDeclarations = pack.properties().bufferObjects(defines).buffers();
 	}
 
-	// TODO-VERIFY: validate persistent storage, typed views and relative resizing on live packs.
 	void resize(VkCommandBuffer cmd, int width, int height) {
 		for (ImageInformation info : this.imageDeclarations) {
 			int w = info.relative() ? Math.max(1, (int) (width * info.relativeWidth())) : info.width();

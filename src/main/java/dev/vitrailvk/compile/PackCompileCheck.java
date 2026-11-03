@@ -141,6 +141,29 @@ public final class PackCompileCheck {
 			LOGGER.error("[compile] {}: the chain could not be planned", packName, e);
 			return new int[] {0, 0};
 		}
+		// Graphics shadow composites as the renderer loads them: one that fails in its constructor costs the
+		// whole pack, and it is what tells whether a switched off one (BSL's) stays off.
+		try {
+			for (Map.Entry<String, PackProgram.Loaded> entry : PackProgram.loadShadowComposites(opened, place).entrySet()) {
+				for (TranslatedUnit unit : entry.getValue().program().stages().values()) {
+					units++;
+					String name = entry.getKey() + "." + unit.stage().extension();
+					SpirvCompiler.Result result = compiler.compile(name, unit.text(), unit.stage());
+					if (result.ok()) {
+						compiled++;
+					} else {
+						StringBuilder detail = new StringBuilder();
+						result.diagnostics().forEach(d -> detail.append("\n    ").append(d));
+						failures.add(new Failure(entry.getKey(), unit.stage().extension(), detail.toString()));
+						LOGGER.error("[compile] {} {}: {} error(s){}", packName, name, result.errors(), detail);
+						dump(dumpDir, packName, name, unit.text());
+					}
+				}
+			}
+		} catch (IOException | RuntimeException e) {
+			failures.add(new Failure("shadowcomp", "translate", e.toString()));
+			LOGGER.error("[compile] {}: shadow composites failed", packName, e);
+		}
 		for (PackProgram.GeometryElement element : meshElements()) {
 			String label = element.program() + "[" + element.inputs() + " " + String.join(",", element.bound()) + "]";
 			PackProgram.Loaded loaded;

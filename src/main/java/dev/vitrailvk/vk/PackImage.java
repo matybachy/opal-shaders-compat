@@ -31,7 +31,6 @@ public final class PackImage extends VulkanImage {
 		this.dimensions = dimensions;
 	}
 
-	// TODO-VERIFY: verify volume/lookup uploads and lifecycle alongside VMR's in-flight frames.
 	public static PackImage create(int dimensions, int width, int height, int depth, int format,
 			int usage, boolean linear, boolean clamp) {
 		if (dimensions < 1 || dimensions > 3 || width <= 0 || height <= 0 || depth <= 0

@@ -5,30 +5,43 @@ v [ANALYSIS.md](ANALYSIS.md).
 
 ## Stav
 
+Pozor: od položky 3 dál nic neběželo ve hře (pokyn „netestuj“). „Hotovo v kódu“ znamená přeloženo a staticky
+ověřeno proti zdrojům, ne funkční. Poslední skutečný běh je `test_terrain` před commitem `f79800c`.
+
 | Položka | Stav |
 |---|---|
-| 1 Reference a build | hotovo |
-| 2 Mixiny a runtime | hotovo |
-| 3 Optiony, noisetex, mipmapy, blendy | hotovo, vizuálně neověřeno |
-| 4 Stíny | – |
-| 5 Obloha, entity, ruka, částice, počasí, mraky | – |
-| 6 Custom textury a compute | – |
-| 7 GUI výběru packu a nastavení | – |
+| 1 Reference a build | hotovo, `./gradlew build` prochází |
+| 2 Mixiny a runtime | hotovo, běželo ve hře (`test_final`, `test_composite`, `test_terrain`) |
+| 3 Optiony, noisetex, mipmapy, blendy | hotovo v kódu |
+| 4 Stíny: terén, entity, block entity, `shadowcomp` (grafické), mipmapy | hotovo v kódu |
+| 5 Obloha, entity, ruka, částice, počasí, mraky | hotovo v kódu |
+| 6 Custom textury, image.*, SSBO | hotovo v kódu; **compute se při běhu nespouští** |
+| 7 GUI výběru packu a nastavení | nezačato |
+| A Flywheel, Create, Colorwheel | nezačato |
+| B Ostatní mody včetně Mekanismu | obecná cesta entit a BER existuje, mapování nezačato |
+| C Distant Horizons včetně `dh_*` | nezačato (`dh/DhDepth`, `glsl/DistantVertex` jsou převzaté a nezapojené) |
 
 **Obnova 2. 11. 2026:** původní složka `vulkan-shaders` i s lokální git historií (M1–M5) zmizela
 z disku (nebyla ani v Koši). Projekt byl obnoven z konverzace a stejných revizí referencí, historie
 začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
 
-## Jak spustit
+## Jak buildnout a spustit
 
-- Java 21: systémový `JAVA_HOME` na tomhle PC ukazuje na JDK 8; `scripts/autotest.sh` si nastaví
-  `C:\Program Files\Zulu\zulu-21`. Při ručním spuštění Gradlu ho nastav taky.
+- Java 21: systémový `JAVA_HOME` na tomhle PC ukazuje na JDK 8. Nastav `C:\Program Files\Zulu\zulu-21`.
+- `./gradlew build`: `build/libs/vitrailvk-<verze>.jar`. VMR se při prvním buildu stáhne do `libs/` a ověří se
+  jeho SHA-256 (`gradle.properties`).
+- `./gradlew checkPacks [-Ppacks=...] [-PdumpAll=true]`: bez hry přeloží a zkompiluje všechny programy packů
+  v `run/shaderpacks`, včetně rodin meshů tak, jak je načítá renderer (entity, obloha, částice, `shadow_entities`)
+  a grafických `shadowcomp`. BSL 10.1.8: 218/218 jednotek. Kontroluje i to, že každý vstup vertexu má zdroj.
 - `scripts/autotest.sh [pack] [-Pautotest.options=A=b,C=d] [-Pautotest.camera=x,z,yaw,pitch,výška]
   [-Pautotest.time=6000]`: build, klient v autotest režimu, souhrn. Výstupy jsou v `run/autotest/`.
-- `./gradlew checkPacks [-Ppacks=...] [-PdumpAll=true]`: mimoherní překlad a kompilace všech programů.
 - `scripts/pixel.py soubor.png x,y ...`: hodnoty pixelů bez závislostí.
-- `scripts/take_from_vitrail.py`: převzetí skupiny a z Vitrailu do `src/main/java/dev/vitrail`.
+- `scripts/take_from_vitrail.py`: převzetí skupiny a z Vitrailu do `src/main/java/dev/vitrail`. **Pozor:** přepsal by
+  úpravy v `PackProgram`, `ShaderProperties` a `TargetPlan` (značené `VitrailVK:`), znovu je pak dopiš ručně.
 - `-Pvalidation=false` vypne validation layers (`tools/vvl`, Khronos nightly, mimo git).
+
+Pack se vybírá v `config/vitrailvk.properties` (`shaderPack`, `profile`, `option.NAME`) nebo přes systémové
+vlastnosti `vitrailvk.pack` a `vitrailvk.options`. GUI zatím není.
 
 ## Rozhodnutí
 
@@ -53,15 +66,137 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
   porovnává formát identitou, proto se při startu rozšiřuje přímo
   `CustomVertexFormat.COMPRESSED_TERRAIN` (stride 40 B). **Zapnutí/vypnutí packu vyžaduje restart**,
   přepnutí mezi packy ne. `dev/vitrail/glsl/SodiumVertex.java` je vlastní náhrada se stejným API.
-- **Snímek:** clear a begin/prepare při prvním kreslení; terén vlastní smyčkou nad `ChunkArea`/
-  `DrawBuffers` (accessory do VMR); před první průsvitnou vrstvou kopie `depthtex1` a deferred; po
-  levelu kopie `depthtex2`, zbytek řetězce a `final`. VMR se přerušuje přes `temporaryRenderTarget()`.
-- **Optiony:** `config/vitrailvk.properties` (`shaderPack`, `profile`, `option.NAME`), přednost mají
-  systémové properties `vitrailvk.pack` a `vitrailvk.options`.
+- **Pořadí snímku:** `beginLevel` → `beforeSky` (clear, begin, stín: terén, entity, kopie `shadowtex1`, průsvitné,
+  `shadowcomp`, prepare) → obloha → neprůhledný terén → entity a BER → před první průsvitnou vrstvou kopie
+  `depthtex2`, neprůhledná ruka, kopie `depthtex1` a deferred → průsvitné → mraky, počasí → na konci `renderLevel`
+  průsvitná ruka → `afterLevel` (composite, `final`, teprve pak efekty přes obraz). VMR se přerušuje přes
+  `temporaryRenderTarget()`.
+- **Meshe mimo terén** (`MeshDraw`, `MeshPrograms`, `Families`): záchyt v `BufferUploader._drawWithShader` a `draw`
+  a v `VBO.drawWithShader`. Program určí jméno shaderu, fáze a vlastník vrcholu. Stav (blend, depth, cull, polygon
+  offset) se čte z `VRenderSystem`, jak ho hra nastavila. Vázání: 0 mesh, 1 jeden záznam konstant na draw pro to, co
+  formát nemá (instance rate), 2 odvozený proud na vrchol (`EntityIds`, `MidTexCoord`, `Tangent`), jen když ho
+  program opravdu čte (`SpirvModule` hlásí `read`) a vrcholy jsou po ruce.
+- **Co pack neobslouží, kreslí VMR do svého targetu a `final` to přepíše.** Není to chyba, jen to chybí v obraze.
+  Výjimka: pack bez programu pro terén (např. jen color grade) dostane obraz VMR do targetu (`seedFromGame`).
+- **Identita vrcholu** (`DrawIds`, `BufferBuilderMixin`, `MeshDataMixin`): dávka míchá vlastníky a kreslí se později,
+  proto se ID zapisuje u každého vrcholu; smíšené dávky se dělí na běhy v původním pořadí (`MixedMesh`).
+- **Optiony:** `config/vitrailvk.properties`, přednost mají systémové properties.
 - **Device features** (`DeviceManagerMixin`): `independentBlend`, `geometryShader`,
   `fragmentStoresAndAtomics`, storage image formáty a další, kde je GPU má.
 - **Mipmapy:** `colortexNMipmapEnabled` se generují blitem před passem, který je žádá, na straně, kterou
   čte (jako Iris). Normály/specular bez resource packu dostávají neutrální 1×1 texturu.
+- **Barriéry** (`ImageLayouts`, `VulkanImageMixin`): přechody z/do `SHADER_READ_ONLY` a `GENERAL` jdou přes
+  `ALL_COMMANDS`, protože VMR počítá jen se čtením ve fragmentu a `GENERAL` neumí, a packy čtou i ve vertexu. Platí
+  i pro obrázky VMR; layout, který VMR sleduje, zůstává pravdivý. Globální bariéra jen pro program se storage.
+- **Paměť a deskriptory** (`FrameArena`, `allocateSet`): rostou po stránkách místo selhání, recyklují se po čekání
+  na fence daného slotu, ne dvakrát za snímek (mod může kreslit level víckrát).
+
+## Práce Codexu (větev `codex-work`, revize `39fd05e`)
+
+Import doslova je commit `bed96bd`, opravy jsou zvlášť. Zip neměl `.git`, ale stál přímo na `b65080c`, takže rozdíl
+stromů je celá práce. Jar `vitrailvk-0.1.0-alpha.jar` je bajt po bajtu shodný ve všech třídách s buildem těchto
+zdrojů, liší se jen konce řádků v `vitrailvk.mixins.json`; o funkčnosti nic neříká.
+
+**Přijato:** oprava `:jar` v `build.gradle`, `HandPass` (dvě fáze ruky podle Iris), `MixedMesh` a `DrawIds`
+(identita vrcholů), `ShadowFeatures`, grafické `shadowcomp` s vlastními flipy (shoda s Iris ověřena),
+`ShadowMaps`, `TextureImages`, `PackStorage`, `PackImage`, `ImageLayouts`, `StorageBuffer`, `applyViewport`,
+odložený úklid po chybě (`fail`/`frameEnded`).
+
+**Odstraněno:** `VertexBufferMixin`. Injektory při HEAD běží v pořadí aplikace: nižší `order`, pak nižší priorita.
+Komentář v něm počítal s opakem, takže běžel až po `VertexBufferM` z VMR, který vždy ruší. Celý mrtvý kód: obloha ani
+mraky se nikdy nedostaly k packu. Navíc držel kopii každého statického VBO na haldě. Nahrazeno `VboMixin` na `VBO`.
+
+**Opraveno** (vše staticky, nic z toho neběželo):
+
+- nenastavené `renderStage` a `of_PassColour` (slunce, měsíc, barva oblohy), direktivy `sun`, `moon`, `stars`, `sky`,
+  `clouds`, `weather` se ignorovaly;
+- overlay entit se vázal na bílou 1×1 a `texelFetch` četl mimo obraz (hrozily černé entity);
+- hloubka ruky v 0..0,125 místo 0,4375..0,5625, na který se packy ptají (`depth < 0.56`);
+- `depthtex2` se kopírovala až po ruce; náhradní `UV0`, `UV1`, `UV2` byly nuly (červený overlay, tma), teď jako Iris;
+- obrys bloku, praskliny, hranice světa a programy mimo plán (`gbuffers_beaconbeam`, `gbuffers_lightning`) skončily
+  ve VMR, tedy zmizely; polygon offset se ignoroval;
+- vanilla blob pod entitou šel i do stínové mapy (teď se vypíná jako v Iris, když pack kreslí stíny);
+- efekty přes obraz (oheň, voda) šly přes program ruky místo až po `final`;
+- globální bariéra `ALL_COMMANDS` při každém zápisu deskriptorů, tedy zastavení GPU pro každý draw;
+- 112 B konstant na vrchol s nulováním po bajtech (teď jeden záznam na draw);
+- `vkResetDescriptorPool` a přepis UBO při druhém `renderLevel` v jednom snímku;
+- čtení depth přichycené jako attachment (špatný layout), deskriptor 2D pro `sampler3D`/`sampler1D`;
+- `render type setup` uvnitř přerušeného průchodu: pod Fabulous by spustil pass VMR uprostřed našeho (i v původním
+  kódu terénu); všechny průchody na jednom `MemoryStack` (64 kB, `OutOfMemoryError` u packů s desítkami passů);
+- targety s `clear=false` četly v prvním snímku nedefinovaná data (Iris dělá plný clear);
+- `VK_IMAGE_USAGE_STORAGE_BIT` i pro formát, který ho neumí; chybějící textura nebo nepodporovaný raw shodil celý pack
+  (teď varování a černá); `reload()` zavíral prostředky, které ještě používal rozepsaný snímek; ochrana před
+  `skipRendering` (minimalizace by jinak pack trvale vypnula).
+
+## Mixiny
+
+Vše je ověřené proti bajtkódu (`javap` nad `neoforge-21.1.228-merged.jar` a jarem VMR), včetně descriptorů handlerů,
+statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žádný mixin nemá `require = 0`; platí
+`defaultRequire: 1`, takže špatný cíl shodí hru při startu.
+
+| Mixin | Cíl | Remap |
+|---|---|---|
+| `LevelRendererMixin` | `renderLevel` (HEAD, před `renderSky`, před `RenderType.translucent()` ve 2 větvích, RETURN), `renderSky`, `renderClouds`, `renderSnowAndRain` | ano |
+| `GameRendererMixin` | `render`, `renderItemInHand` (obal, `renderHandsWithItems`, `renderScreenEffect`) | ano |
+| `BufferUploaderMixin` | `_drawWithShader`, `draw` (order 1000, před `order = 2000` z VMR) | ano |
+| `BufferBuilderMixin`, `MeshDataMixin` | `beginVertex`, `build`, nové pole | ano |
+| `EntityRenderDispatcherMixin` | `render`, `renderFlame`, statické `renderShadow` | ano |
+| `BlockEntityRenderDispatcherMixin`, `ItemRendererMixin`, `ItemInHandRendererMixin`, `ParticleEngineMixin` | `render`, `render`, `renderArmWithItem`, `render` (5 argumentů) | ano |
+| `GameRendererAccessor`, `LevelRendererAccessor`, `TextureAtlasAccessor`, `BiomesMixin` | `getFov`, `bobHurt`, `bobView`, `renderHand`, `renderEntity`, statické `Biomes.register` | ano |
+| `VboMixin`, `VboAccessor` | `VBO.drawWithShader(..., ShaderInstance)`, pole `VBO` | ne |
+| `VulkanImageMixin` | statické `VulkanImage.transitionImageLayout(MemoryStack, VkCommandBuffer, VulkanImage, int)` | ne |
+| `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor` | ne |
+| `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | terén VMR | ne |
+| `CustomVertexFormatMixin`, `TerrainBufferBuilderMixin`, `DeviceManagerMixin` | formát, builder, `createLogicalDevice` | ne |
+
+`@WrapMethod` a `@WrapOperation` potřebují MixinExtras 0.4+, NeoForge 21.1.228 nese 0.5.3 a VMR je používá také.
+
+## Neověřeno za běhu
+
+Pořadí k vyzkoušení při prvním spuštění (`-Pvalidation=true`, sledovat `run/autotest/validation.log`):
+
+1. Hra se spustí bez packu: start potvrdí mixiny, nové jsou `VboMixin`, `VboAccessor`, `RendererAccessor` a cíle Codexu.
+2. `test_terrain`: nic se nerozbilo oproti poslednímu běhu, validace jen baseline VMR.
+3. BSL s výchozími optiony, den, venku: obloha, slunce, mraky, stíny terénu, voda.
+4. Entity a ruka: nejsou černé, zásah zčervená, ruka nezajíždí do bloků; entity vrhají stín, blob pod nimi není.
+5. Obrys bloku, praskliny při kopání, hranice světa, částice, déšť, efekt ohně přes obraz, záře (glowing).
+6. `Fabulous` grafika a změna velikosti okna a minimalizace.
+7. Complementary a pack s custom texturami, image.*, SSBO; pack s grafickým `shadowcomp`.
+8. Sledovat v logu `no program of the pack serves it`, `could not be loaded`, `reads ... from the half it writes`.
+
+Známé `TODO-VERIFY` v kódu: [HandPass.java](src/main/java/dev/vitrailvk/render/HandPass.java) (poloha, hloubka a světlo
+ruky proti Iris), [ShadowFeatures.java](src/main/java/dev/vitrailvk/render/ShadowFeatures.java) (vedlejší efekty
+druhého vykreslení entit v modech).
+
+## Známé problémy a omezení
+
+- Baseline validace VMR 0.3.5 bez našeho vlivu: `VUID-vkQueueSubmit-pSignalSemaphores-00067`,
+  `VUID-vkDestroyDevice-device-05137`.
+- Varování `Undefined-Value-ShaderOutputNotConsumed`: výstup `ofCoverage` z Vitrailu nemá attachment.
+- **Compute (`.csh`) se při běhu nespouští**, `PackProgram.loadCompute` používá jen `checkPacks`. Pack závislý na
+  výsledku compute (voxel, floodfill) to za běhu pozná jen chybějícím efektem. BSL ho má jen pro
+  `MULTICOLORED_BLOCKLIGHT`, který je ve výchozím stavu vypnutý.
+- Do stínu jdou jen sekce zkompilované grafem kamery, VMR jiné nemá.
+- `centerDepth` čte depth přímo, bez vyhlazení. `normals`/`specular` zatím neutrální, atlasy PBR se nenačítají.
+- Raw textury: packed, BGR, integer a rectangle zatím čtou černou. VBO s `transientGeometry` kreslí VMR.
+- Zapnutí/vypnutí packu vyžaduje restart. Shadow program čtoucí stejnou mapu, kterou zapisuje, dostane `shadowtex1`.
+- `Vk.storageUsage`: pack, který váže jako `colorimg` target ve formátu bez storage podpory, selže při zápisu deskriptoru.
+
+## Co zbývá
+
+1. **Compute při běhu.** V konstruktoru `PackRenderer` z `chain.targets().computes()` načíst `PackProgram.loadCompute`
+   a `PackPipeline.Kind.COMPUTE`, s úklidem při selhání. Dispatch mimo render pass, `Compute.groupsAt(w, h)`, nula může
+   být záměrné vypnutí, velikost nehádat, bariéry přes `ImageLayouts`. Časování podle `refs/Iris`
+   (`IrisRenderingPipeline`, `CompositeRenderer`, `ShadowCompositeRenderer`): setup jednou, `shadow` před mapou,
+   `shadowcomp` po ní, `begin`/`prepare`/`deferred`/`composite` před odpovídajícím grafickým slotem, i compute-only
+   sloty a písmena ve správném pořadí (`TargetPlan.passing()`, `ProgramNames.frameOrder()`, `TargetSchedule`).
+2. **GUI.** `dev/vitrail/pack/menu` je převzaté, `ShaderPacks.select`/`saveOptions` a `PackRenderer.reload` existují.
+   Chybí vstup ve video nastavení, obrazovky a rozlišení změny, která vyžaduje restart (jiný stride).
+3. **Flywheel, Create, Colorwheel.** VMR 0618965 má `compat/sable/flywheel` (`VulkanFlywheelBackend`,
+   `VulkanFlywheelBootstrap`), experimentální za vlastností `vulkanmod.compat.sable.flywheel.experimental`. To dokládá
+   cestu, ne napojení na pack. Zdroje těch tří modů v `refs/` nejsou. Záchrana: Flywheel vypnout, Create přes vanilla BER.
+4. **Ostatní mody.** Mapování modovaných vrstev (Mekanism a další) na programy, případně minimální shim Iris API.
+5. **Distant Horizons.** Rozhraní DH, geometrie, matice, hloubka, `dh_terrain`, `dh_water`, `dh_shadow`, bez forku.
 
 ## Reference: Iris-Vulkan-Port
 
@@ -80,15 +215,8 @@ takže z transformační části nic nepřebíráme. Cílí na Fabric a vlastní
   `PackNameIds`, `BiomeClassifier`. Viz `scripts/take_from_vitrail.py`. Java 21 (`_` → `unusedN`), API 1.21.1.
 - Vlastní náhrady Vitrailových souborů: `glsl/GameTransforms`, `glsl/SodiumVertex`, `render/FrameState`
   (port na 1.21.1), `FaceShading`, `HandDraw`, `ShadowTargets`, `PackImages`.
+- Úpravy ve Vitrailu po převzetí: `PackProgram.loadShadowComposites`, `ShaderProperties.viewportScales`, poznámka
+  v `TargetPlan` (Codex, značené `VitrailVK:`).
+- Podle chování Iris 1.21.1 (LGPL-3.0), bez kopie kódu, viz [NOTICE](NOTICE): `HandPass`, `ShadowFeatures`, `DrawIds`,
+  `ItemInHandRendererMixin`, `TextureImages`, `Families`, flipy v `ShadowMaps`.
 - Licence LGPL-3.0-only, `NOTICE-vitrail` je beze změny.
-
-## Známé problémy
-
-- Baseline validace VMR 0.3.5 bez našeho vlivu: `VUID-vkQueueSubmit-pSignalSemaphores-00067`,
-  `VUID-vkDestroyDevice-device-05137`.
-- Varování `Undefined-Value-ShaderOutputNotConsumed`: výstup `ofCoverage` z Vitrailu nemá attachment.
-
-## Vizuálně neověřeno (projít v závěrečném testování)
-
-- Noisetex, mipmapy, blend direktivy, optiony z configu; `MC_VERSION`/vendor/biomy v `Machine`.
-- BSL a Complementary end-to-end.

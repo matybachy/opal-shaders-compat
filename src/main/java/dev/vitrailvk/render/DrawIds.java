@@ -14,7 +14,10 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import java.nio.ByteBuffer;
 
-/** The three identifiers in the entity vertex input, in the translator's lane order. */
+/**
+ * The three identifiers in the entity vertex input, in the translator's lane order. Which number an entity
+ * or item answers follows Iris 1.21.1 ({@code mixin/entity_render_context}). LGPL-3.0, see NOTICE.
+ */
 public record DrawIds(int entity, int blockEntity, int item, Kind kind) {
 	public enum Kind { NONE, ENTITY, BLOCK_ENTITY }
 	public static final DrawIds NONE = new DrawIds(0, -1, -1, Kind.NONE);

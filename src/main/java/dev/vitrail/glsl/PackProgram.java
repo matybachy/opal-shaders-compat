@@ -400,7 +400,6 @@ public final class PackProgram {
 	}
 
 	// VitrailVK: shadow composites have their own target schedule and must not enter the main chain.
-	// TODO-VERIFY: confirm dimension and program-toggle behavior with running shader packs.
 	/** Translates the enabled shadow composite graphics programs of this place in slot order. */
 	public static Map<String, Loaded> loadShadowComposites(OpenedPack pack, String place) throws IOException {
 		ShaderPackSource source = pack.source();

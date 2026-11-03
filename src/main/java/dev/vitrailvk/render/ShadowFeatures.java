@@ -20,12 +20,16 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** Submits visible entities and block entities into the light's mesh pass. */
+/**
+ * Submits visible entities and block entities into the light's mesh pass. The walk follows Iris 1.21.1
+ * ({@code shadows/ShadowRenderer.renderEntities}, {@code renderBlockEntities}). LGPL-3.0, see NOTICE.
+ */
 final class ShadowFeatures {
 	private ShadowFeatures() {
 	}
 
-	// TODO-VERIFY: validate light frustum, client-side renderer side effects, buffer flushing and state restoration.
+	// TODO-VERIFY: entities and block entities are rendered a second time per frame here, as under Iris. Whether
+	// any mod's renderer minds that shows only in a live frame.
 	static void render(PackValues values, Camera camera, float tick, Collection<RenderSection> sections,
 			ShadowCasters casters) {
 		Minecraft mc = Minecraft.getInstance();
@@ -35,6 +39,9 @@ final class ShadowFeatures {
 		values.drawnShadowPair(view, projection);
 		Frustum frustum = new Frustum(view, projection);
 		frustum.prepare(position.x, position.y, position.z);
+		int chunks = mc.options.getEffectiveRenderDistance();
+		float limit = values.entityShadowDistance(chunks, chunks);
+		double limitSquared = limit < 0.0F ? Double.MAX_VALUE : (double) limit * limit;
 		Matrix4f oldProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
 		Matrix4fStack modelView = RenderSystem.getModelViewStack();
 		PoseStack poses = new PoseStack();
@@ -48,6 +55,7 @@ final class ShadowFeatures {
 			if (casters.entities() || casters.player()) {
 				for (Entity entity : mc.level.entitiesForRendering()) {
 					if ((!casters.entities() && entity != mc.player) || entity.isSpectator()
+							|| entity.distanceToSqr(position.x, position.y, position.z) > limitSquared
 							|| !mc.getEntityRenderDispatcher().shouldRender(entity, frustum, position.x, position.y, position.z)) continue;
 					((LevelRendererAccessor) mc.levelRenderer).vitrailvk$renderEntity(entity, position.x, position.y,
 							position.z, tick, poses, buffers);
@@ -61,6 +69,7 @@ final class ShadowFeatures {
 					if (block.isRemoved()) continue;
 					var pos = block.getBlockPos();
 					if (casters.emittersOnly() && block.getBlockState().getLightEmission(mc.level, pos) == 0) continue;
+					if (pos.distToCenterSqr(position.x, position.y, position.z) > limitSquared) continue;
 					poses.pushPose();
 					try {
 						poses.translate(pos.getX() - position.x, pos.getY() - position.y, pos.getZ() - position.z);

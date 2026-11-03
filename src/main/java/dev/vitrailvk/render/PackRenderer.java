@@ -46,9 +46,11 @@ import dev.vitrailvk.vk.Std140Writer;
 import dev.vitrailvk.vk.Vk;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ScreenEffectRenderer;
 import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
@@ -58,6 +60,7 @@ import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.render.VBO;
 import net.vulkanmod.render.chunk.ChunkArea;
 import net.vulkanmod.render.chunk.RenderSection;
+import net.vulkanmod.render.chunk.SectionGrid;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.chunk.buffer.AreaBuffer;
 import net.vulkanmod.render.chunk.buffer.DrawBuffers;
@@ -196,6 +199,8 @@ public final class PackRenderer implements AutoCloseable {
 	private boolean shadowDone;
 	private boolean deferredDone;
 	private boolean preHandDepthCopied;
+	private boolean targetsFresh;
+	private boolean shadowFresh = true;
 	private int nextPass;
 	private long slotSerial = -1;
 	private List<Long> framePools;
@@ -228,11 +233,18 @@ public final class PackRenderer implements AutoCloseable {
 				this.blocks.put(entry.getKey(), block(entry.getKey(), entry.getValue(), this.values.catalog()));
 			}
 			this.shadowComposites.putAll(PackProgram.loadShadowComposites(this.opened, this.chain.place()));
-			for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
+			for (var iterator = this.shadowComposites.entrySet().iterator(); iterator.hasNext(); ) {
+				Map.Entry<String, PackProgram.Loaded> entry = iterator.next();
 				String name = entry.getKey();
-				this.shadowCompositePipelines.put(name, new PackPipeline(name, entry.getValue().program(), compiler,
-						PackPipeline.Kind.QUAD));
-				this.shadowCompositeBlocks.put(name, block(name, entry.getValue(), this.values.catalog()));
+				try {
+					this.shadowCompositePipelines.put(name, new PackPipeline(name, entry.getValue().program(), compiler,
+							PackPipeline.Kind.QUAD));
+					this.shadowCompositeBlocks.put(name, block(name, entry.getValue(), this.values.catalog()));
+				} catch (PackPipeline.CompileException e) {
+					// The map is still drawn, and the world with it; only what this pass would add to it is missing.
+					VitrailVk.LOGGER.error("[pack] {} left out", name, e);
+					iterator.remove();
+				}
 			}
 			for (ShaderProperties.FlipDirective flip : this.opened.properties().flips(this.opened.settings().globalDefines(this.opened.options()))) {
 				if (!flip.program().startsWith("shadowcomp")) continue;
@@ -549,10 +561,14 @@ public final class PackRenderer implements AutoCloseable {
 		}
 	}
 
-	/** Drops the running pack so the next frame reads it again, with its current selection and settings. */
+	/**
+	 * Drops the running pack so the frame after this one reads it again, with its current selection and
+	 * settings. Not at once: commands recorded for this frame may use what it holds, and
+	 * {@link #frameEnded} is where those are known to be done with.
+	 */
 	public static void reload() {
-		shutDown();
 		failedKey = null;
+		if (active != null) failedDuringFrame = true;
 	}
 
 	private static void fail(RuntimeException e) {
@@ -629,6 +645,7 @@ public final class PackRenderer implements AutoCloseable {
 			this.renderPasses.forgetFramebuffers();
 			freeTargets();
 			this.targets = new PackTargets(this.chain.targets(), screen.width, screen.height);
+			this.targetsFresh = true;
 			this.storage.resize(cmd, screen.width, screen.height);
 			int usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
 					| VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -724,13 +741,6 @@ public final class PackRenderer implements AutoCloseable {
 				outputs.add(target.image(attachment.side()));
 			}
 
-			// The atlas and the light map this layer's render state binds, looked up through
-			// VulkanMod's GL emulation (its own slots are only filled when its pipeline draws).
-			renderType.setupRenderState();
-			VulkanImage atlas = glImage(RenderSystem.getShaderTexture(0));
-			VulkanImage lightmap = glImage(RenderSystem.getShaderTexture(2));
-			renderType.clearRenderState();
-
 			this.values.modelView(LevelCapture.modelView(), IDENTITY);
 			this.values.projection(LevelCapture.projection());
 			this.values.passAlphaTest(pass == TerrainPass.CUTOUT ? 0.1F : 0.0F);
@@ -744,8 +754,7 @@ public final class PackRenderer implements AutoCloseable {
 			});
 
 			long set = allocateSet(stack, pipeline.setLayout());
-			writeDescriptors(stack, set, pipeline, loaded, this.terrainBlocks.get(pass), outputs, this.depth,
-					new GameImages(atlas, lightmap, null), null);
+			writeDescriptors(stack, set, pipeline, loaded, this.terrainBlocks.get(pass), outputs, this.depth, chunkImages(), null);
 
 			String bareName = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
 			String askedName = pass == TerrainPass.TRANSLUCENT ? "gbuffers_water" : bareName;
@@ -961,6 +970,22 @@ public final class PackRenderer implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * The atlas and the light map of the chunk layers, looked up through VulkanMod's GL emulation (its
+	 * own slots are only filled when its pipeline draws). Asked for directly and not through a layer's
+	 * render state: under Fabulous that state binds a render target, which begins a pass of VulkanMod's
+	 * right where the pack is about to begin its own.
+	 */
+	private static GameImages chunkImages() {
+		Minecraft minecraft = Minecraft.getInstance();
+		LightTexture light = minecraft.gameRenderer.lightTexture();
+		light.turnOnLightLayer();
+		VulkanImage lightmap = glImage(RenderSystem.getShaderTexture(2));
+		light.turnOffLightLayer();
+		VulkanImage atlas = glImage(minecraft.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getId());
+		return new GameImages(atlas, lightmap, null);
+	}
+
 	/** What the pack's {@code blend.<program>} directives ask for, per attachment. */
 	private List<PackPipeline.Blend> blends(String asked, String served, int attachments, PackPipeline.Blend fallback) {
 		List<PackPipeline.Blend> blends = new ArrayList<>(Math.max(1, attachments));
@@ -1059,13 +1084,15 @@ public final class PackRenderer implements AutoCloseable {
 			if (this.shadowDone) return;
 			this.shadowDone = true;
 			ShadowCasters casters = this.values.shadowCasters();
-			Collection<ShadowArea> areas = shadowWanted() || casters.anyBlockEntity() ? shadowSections(camX, camY, camZ) : List.of();
+			// No shadow program means no map, whatever the casters say: the mobs would be walked for nothing.
+			boolean map = shadowWanted();
+			Collection<ShadowArea> areas = map ? shadowSections(camX, camY, camZ) : List.of();
 			if (!areas.isEmpty() && casters.terrain()) {
-				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_SOLID, RenderType.solid(), TerrainRenderType.SOLID, camX, camY, camZ);
-				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutoutMipped(), TerrainRenderType.CUTOUT_MIPPED, camX, camY, camZ);
-				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, RenderType.cutout(), TerrainRenderType.CUTOUT, camX, camY, camZ);
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_SOLID, TerrainRenderType.SOLID, camX, camY, camZ);
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, TerrainRenderType.CUTOUT_MIPPED, camX, camY, camZ);
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_CUTOUT, TerrainRenderType.CUTOUT, camX, camY, camZ);
 			}
-			if (casters.anyFeature()) {
+			if (map && casters.anyFeature()) {
 				List<RenderSection> sections = areas.stream().flatMap(area -> area.sections().stream()).toList();
 				ShadowFeatures.render(this.values, camera, tick, sections, casters);
 				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
@@ -1073,7 +1100,7 @@ public final class PackRenderer implements AutoCloseable {
 			}
 			copyDepth(cmd, stack, this.shadow.depth(), this.shadow.depthNoTranslucent());
 			if (!areas.isEmpty() && casters.translucent()) {
-				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, RenderType.translucent(), TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
+				shadowLayer(cmd, stack, areas, TerrainPass.SHADOW_TRANSLUCENT, TerrainRenderType.TRANSLUCENT, camX, camY, camZ);
 			}
 			if (this.shadow.depth().mipLevels > 1) mipChain(cmd, stack, this.shadow.depth(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (this.shadow.depthNoTranslucent().mipLevels > 1) mipChain(cmd, stack, this.shadow.depthNoTranslucent(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
@@ -1111,7 +1138,9 @@ public final class PackRenderer implements AutoCloseable {
 		FrustumIntersection frustum = new FrustumIntersection(this.values.shadowFrustum(new Matrix4f()), false);
 		float boundSquared = bound * bound;
 		Map<ChunkArea, ShadowArea> areas = new LinkedHashMap<>();
-		for (RenderSection section : WorldRenderer.getInstance().getSectionGrid().sections) {
+		SectionGrid grid = WorldRenderer.getInstance().getSectionGrid();
+		if (grid == null) return List.of();
+		for (RenderSection section : grid.sections) {
 			if (section == null || !section.isCompiled() || section.isCompletelyEmpty()) continue;
 			ChunkArea area = section.getChunkArea();
 			if (area == null) continue;
@@ -1130,7 +1159,7 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	private void shadowLayer(VkCommandBuffer cmd, MemoryStack stack, Collection<ShadowArea> areas, TerrainPass pass,
-			RenderType renderType, TerrainRenderType type, double camX, double camY, double camZ) {
+			TerrainRenderType type, double camX, double camY, double camZ) {
 		Set<TerrainRenderType> drawn = Initializer.CONFIG.uniqueOpaqueLayer
 				? TerrainRenderType.COMPACT_RENDER_TYPES : TerrainRenderType.SEMI_COMPACT_RENDER_TYPES;
 		if (!drawn.contains(type)) return;
@@ -1141,15 +1170,9 @@ public final class PackRenderer implements AutoCloseable {
 		List<VulkanImage> outputs = new ArrayList<>();
 		for (int index : shadowWrites(loaded)) outputs.add(this.shadow.colour(index));
 
-		renderType.setupRenderState();
-		VulkanImage atlas = glImage(RenderSystem.getShaderTexture(0));
-		VulkanImage lightmap = glImage(RenderSystem.getShaderTexture(2));
-		renderType.clearRenderState();
-
 		this.values.passAlphaTest(pass == TerrainPass.SHADOW_CUTOUT ? 0.1F : 0.0F);
 		long set = allocateSet(stack, pipeline.setLayout());
-		writeDescriptors(stack, set, pipeline, loaded, this.terrainBlocks.get(pass), outputs, this.shadow.depth(),
-				new GameImages(atlas, lightmap, null), null);
+		writeDescriptors(stack, set, pipeline, loaded, this.terrainBlocks.get(pass), outputs, this.shadow.depth(), chunkImages(), null);
 
 		String bareName = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
 		List<PackPipeline.Blend> blends = blends(pass.program(), bareName, outputs.size(), PackPipeline.Blend.OFF);
@@ -1240,13 +1263,15 @@ public final class PackRenderer implements AutoCloseable {
 
 	private void clearShadowMaps(VkCommandBuffer cmd, MemoryStack stack) {
 		this.shadow.resetFlips();
+		boolean fresh = this.shadowFresh;
+		this.shadowFresh = false;
 		clearDepth(cmd, stack, this.shadow.depth());
 		clearDepth(cmd, stack, this.shadow.depthNoTranslucent());
 		VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack)
 				.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(VK_REMAINING_MIP_LEVELS).layerCount(VK_REMAINING_ARRAY_LAYERS);
 		for (Map.Entry<Integer, VulkanImage> entry : this.shadow.colours().entrySet()) {
 			PackDirectives.ShadowColour directive = this.shadow.directive(entry.getKey());
-			if (directive != null && !directive.clear()) continue;
+			if (!fresh && directive != null && !directive.clear()) continue;
 			TargetDirectives.Colour colour = directive == null ? new TargetDirectives.Colour(1.0F, 1.0F, 1.0F, 1.0F) : directive.clearColour();
 			VkClearColorValue value = VkClearColorValue.calloc(stack);
 			if (directive != null && directive.format().used().integer()) {
@@ -1313,8 +1338,13 @@ public final class PackRenderer implements AutoCloseable {
 		TargetDirectives directives = this.chain.targets().directives();
 		VkImageSubresourceRange.Buffer colourRange = VkImageSubresourceRange.calloc(1, stack)
 				.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(VK_REMAINING_MIP_LEVELS).layerCount(VK_REMAINING_ARRAY_LAYERS);
+		// A target that keeps its contents between frames still starts from something defined. Iris clears
+		// everything the first time (ClearPassCreator, fullClear), and a history buffer read uninitialised
+		// would carry what it found for as long as the pack blends it into itself.
+		boolean fresh = this.targetsFresh;
+		this.targetsFresh = false;
 		for (PackTargets.Target target : this.targets.all()) {
-			if (!directives.clears(target.index())) continue;
+			if (!fresh && !directives.clears(target.index())) continue;
 			TargetDirectives.Colour colour = directives.clearColour(target.index());
 			VkClearColorValue value = VkClearColorValue.calloc(stack);
 			if (target.index() == 0 && !directives.declaresClearColour(0)) {
