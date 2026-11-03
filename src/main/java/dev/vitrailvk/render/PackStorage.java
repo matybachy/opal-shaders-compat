@@ -104,6 +104,8 @@ final class PackStorage implements AutoCloseable {
 
 	StorageBuffer buffer(String name) { return this.buffers.get(CustomStorage.indexOf(name)); }
 
+	StorageBuffer buffer(int index) { return this.buffers.get(index); }
+
 	static void barrier(VkCommandBuffer cmd, MemoryStack stack) {
 		VkMemoryBarrier.Buffer barrier = VkMemoryBarrier.calloc(1, stack).sType$Default()
 				.srcAccessMask(VK_ACCESS_MEMORY_WRITE_BIT).dstAccessMask(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);

@@ -1611,6 +1611,15 @@ public final class ShaderProperties {
 		return directives;
 	}
 
+	// VitrailVK: Iris's indirect.<stem> = <buffer> <byte offset>, by which a compute takes its counts from a buffer.
+	public Map<String, long[]> indirectPointers(Map<String, String> defines) {
+		Map<String, long[]> pointers = new LinkedHashMap<>();
+		for (Matcher line : live(Pattern.compile("^\\s*indirect\\.([^=\\s]+)\\s*=\\s*(\\d+)\\s+(\\d+)\\s*$"), defines)) {
+			pointers.put(line.group(1), new long[] {Long.parseLong(line.group(2)), Long.parseLong(line.group(3))});
+		}
+		return pointers;
+	}
+
 	// VitrailVK: preserve live scale directives for the Vulkan fullscreen viewport.
 	public Map<String, String> viewportScales(Map<String, String> defines) {
 		Map<String, String> scales = new LinkedHashMap<>();

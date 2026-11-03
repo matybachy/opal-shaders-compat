@@ -79,33 +79,40 @@ public final class PackCompileCheck {
 					LOGGER.info("[compile] {} {}: switched off by shaders.properties", packName, path);
 					continue;
 				}
-				Optional<ProgramTranslator.TranslatedProgram> program;
-				try {
-					program = translate(packPath, opened, path, entry.getValue());
-				} catch (Exception e) {
-					failures.add(new Failure(path, "translate", e.toString()));
-					LOGGER.error("[compile] {} {}: translation failed", packName, path, e);
-					continue;
-				}
-				if (program.isEmpty()) {
-					LOGGER.info("[compile] {} {}: not served (stages {})", packName, path, entry.getValue());
-					continue;
-				}
-				for (TranslatedUnit unit : program.get().stages().values()) {
-					units++;
-					String name = path + "." + unit.stage().extension();
-					SpirvCompiler.Result result = compiler.compile(name, unit.text(), unit.stage());
-					if (Boolean.getBoolean("vitrailvk.dumpAll")) dump(dumpDir, packName, name, unit.text());
-					if (result.ok()) {
-						compiled++;
-						result.diagnostics().forEach(d -> LOGGER.debug("[compile] {} {}: {}", packName, name, d));
+				// composite.csh and composite.fsh are one path and two programs.
+				List<Set<ProgramStage>> programsAtPath = new ArrayList<>();
+				EnumSet<ProgramStage> graphics = EnumSet.copyOf(entry.getValue());
+				if (graphics.remove(ProgramStage.COMPUTE)) programsAtPath.add(EnumSet.of(ProgramStage.COMPUTE));
+				if (!graphics.isEmpty()) programsAtPath.add(graphics);
+				for (Set<ProgramStage> stages : programsAtPath) {
+					Optional<ProgramTranslator.TranslatedProgram> program;
+					try {
+						program = translate(packPath, opened, path, stages);
+					} catch (Exception e) {
+						failures.add(new Failure(path, "translate", e.toString()));
+						LOGGER.error("[compile] {} {}: translation failed", packName, path, e);
 						continue;
 					}
-					StringBuilder detail = new StringBuilder();
-					result.diagnostics().forEach(d -> detail.append("\n    ").append(d));
-					failures.add(new Failure(path, unit.stage().extension(), detail.toString()));
-					LOGGER.error("[compile] {} {}: {} error(s){}", packName, name, result.errors(), detail);
-					dump(dumpDir, packName, name, unit.text());
+					if (program.isEmpty()) {
+						LOGGER.info("[compile] {} {}: not served (stages {})", packName, path, stages);
+						continue;
+					}
+					for (TranslatedUnit unit : program.get().stages().values()) {
+						units++;
+						String name = path + "." + unit.stage().extension();
+						SpirvCompiler.Result result = compiler.compile(name, unit.text(), unit.stage());
+						if (Boolean.getBoolean("vitrailvk.dumpAll")) dump(dumpDir, packName, name, unit.text());
+						if (result.ok()) {
+							compiled++;
+							result.diagnostics().forEach(d -> LOGGER.debug("[compile] {} {}: {}", packName, name, d));
+							continue;
+						}
+						StringBuilder detail = new StringBuilder();
+						result.diagnostics().forEach(d -> detail.append("\n    ").append(d));
+						failures.add(new Failure(path, unit.stage().extension(), detail.toString()));
+						LOGGER.error("[compile] {} {}: {} error(s){}", packName, name, result.errors(), detail);
+						dump(dumpDir, packName, name, unit.text());
+					}
 				}
 			}
 			int[] counted = meshFamilies(opened, packName, compiler, dumpDir, failures);

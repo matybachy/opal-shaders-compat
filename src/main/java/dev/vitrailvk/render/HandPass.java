@@ -58,13 +58,13 @@ public final class HandPass {
 		return m;
 	}
 
-	// TODO-VERIFY: runs only in a live frame. Hand position, depth range and light against Iris on one pack.
 	public static void render(Camera camera, GameRenderer game, float tick, boolean opaque) {
 		Minecraft mc = Minecraft.getInstance();
 		GameRendererAccessor access = (GameRendererAccessor) game;
 		if (!access.vitrailvk$renderHand() || game.isPanoramicMode() || camera.isDetached()
 				|| !(camera.getEntity() instanceof Player) || mc.player == null || mc.gameMode == null
-				|| mc.options.hideGui || mc.player.isSleeping() || mc.gameMode.getPlayerMode() == GameType.SPECTATOR) return;
+				|| mc.options.hideGui || ((LivingEntity) camera.getEntity()).isSleeping()
+				|| mc.gameMode.getPlayerMode() == GameType.SPECTATOR) return;
 		Matrix4f projection = new Matrix4f(RenderSystem.getProjectionMatrix());
 		Matrix4f handProjection = handProjection(game, access, camera, tick);
 		PoseStack poses = new PoseStack();

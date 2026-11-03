@@ -8,6 +8,7 @@ import dev.vitrail.glsl.PackProgram;
 import dev.vitrail.glsl.LegacyGlsl;
 import dev.vitrail.glsl.VertexInputs;
 import dev.vitrail.pack.model.BlendMode;
+import dev.vitrail.pack.model.ProgramNames;
 import dev.vitrail.pack.model.ProgramStage;
 import dev.vitrail.pack.model.RenderStage;
 import dev.vitrail.pack.model.TargetName;
@@ -41,6 +42,7 @@ import dev.vitrailvk.mixin.WorldRendererAccessor;
 import dev.vitrailvk.pack.ShaderPacks;
 import dev.vitrailvk.terrain.TerrainFormat;
 import dev.vitrailvk.vk.HostBuffer;
+import dev.vitrailvk.vk.StorageBuffer;
 import dev.vitrailvk.vk.PackImage;
 import dev.vitrailvk.vk.Std140Writer;
 import dev.vitrailvk.vk.Vk;
@@ -171,6 +173,8 @@ public final class PackRenderer implements AutoCloseable {
 	private final Map<String, UniformBlock> shadowCompositeBlocks = new HashMap<>();
 	private final Map<String, Map<Integer, Boolean>> shadowFlips = new HashMap<>();
 	private final Map<String, String> viewportScales = new HashMap<>();
+	private final List<String> shadowCompositeOrder = new ArrayList<>();
+	private PackComputes computes;
 	private TextureImages textureImages;
 	private PackStorage storage;
 	private final Map<TerrainPass, PackPipeline> terrainPipelines = new EnumMap<>(TerrainPass.class);
@@ -202,6 +206,9 @@ public final class PackRenderer implements AutoCloseable {
 	private boolean targetsFresh;
 	private boolean shadowFresh = true;
 	private int nextPass;
+	private int nextAlone;
+	/** Where a compute being dispatched stands in the schedule, for what it reads and stores; null means the main halves. */
+	private TargetSchedule.Bound dispatchStep;
 	private long slotSerial = -1;
 	private List<Long> framePools;
 	private int framePool;
@@ -232,6 +239,7 @@ public final class PackRenderer implements AutoCloseable {
 						PackPipeline.Kind.QUAD));
 				this.blocks.put(entry.getKey(), block(entry.getKey(), entry.getValue(), this.values.catalog()));
 			}
+			this.computes = PackComputes.load(this.opened, this.chain, this.values, compiler);
 			this.shadowComposites.putAll(PackProgram.loadShadowComposites(this.opened, this.chain.place()));
 			for (var iterator = this.shadowComposites.entrySet().iterator(); iterator.hasNext(); ) {
 				Map.Entry<String, PackProgram.Loaded> entry = iterator.next();
@@ -246,6 +254,10 @@ public final class PackRenderer implements AutoCloseable {
 					iterator.remove();
 				}
 			}
+			Set<String> shadowOrder = new java.util.TreeSet<>(ProgramNames.frameOrder());
+			shadowOrder.addAll(this.shadowComposites.keySet());
+			shadowOrder.addAll(this.computes.shadowCompositePasses());
+			this.shadowCompositeOrder.addAll(shadowOrder);
 			for (ShaderProperties.FlipDirective flip : this.opened.properties().flips(this.opened.settings().globalDefines(this.opened.options()))) {
 				if (!flip.program().startsWith("shadowcomp")) continue;
 				TargetName.index(flip.buffer()).ifPresent(index -> {
@@ -334,6 +346,7 @@ public final class PackRenderer implements AutoCloseable {
 	/** Every shadow colour the pack samples or a shadow program writes. */
 	private Set<Integer> shadowNamed() {
 		Set<Integer> named = new HashSet<>(this.chain.targets().shadowAllocated());
+		named.addAll(this.computes.shadowColours());
 		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
 			named.addAll(shadowWrites(entry.getValue()));
 			named.addAll(shadowMips(entry.getKey()));
@@ -427,10 +440,10 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	/** Just before {@code LevelRenderer.renderSky}: what the frame needs ahead of the world. */
-	public static void beforeSky(net.minecraft.client.Camera camera, float tick) {
+	public static void beforeSky(net.minecraft.client.Camera camera) {
 		if (!drawing()) return;
 		try {
-			active.openAndShadow(camera, tick);
+			active.openAndShadow(camera);
 		} catch (RuntimeException e) {
 			fail(e);
 		}
@@ -639,6 +652,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.shadowDone = false;
 		this.preHandDepthCopied = false;
 		this.nextPass = 0;
+		this.nextAlone = 0;
 		VulkanImage screen = screen();
 		if (this.targets == null || !this.targets.matches(screen.width, screen.height)) {
 			vkDeviceWaitIdle(Vk.device());
@@ -668,22 +682,100 @@ public final class PackRenderer implements AutoCloseable {
 		this.drawGlobals.clear();
 		this.drawTransforms.clear();
 
-		clearTargets(cmd, stack);
+		// Iris's order: images, the light's computes, the maps, then the targets, which is what those computes
+		// may read of the frame before. Unless there is none yet: the first time they are cleared ahead of them.
+		boolean fresh = this.targetsFresh;
 		this.storage.beginFrame(cmd, stack);
+		if (fresh) clearTargets(cmd, stack);
 		clearShadowMaps(cmd, stack);
-		runPasses(cmd, stack, this.chain.chain().beginEnd());
+		if (!fresh) clearTargets(cmd, stack);
+		this.values.renderStage(RenderStage.NONE);
+		// Once for every size the targets take: what setup makes may live in them.
+		if (fresh) dispatch(cmd, stack, this.computes.setup(), null, 1, 1);
+		runPasses(cmd, stack, this.chain.chain().beginEnd(), "begin");
 	}
 
-	private void runPasses(VkCommandBuffer cmd, MemoryStack stack, int until) {
+	/**
+	 * The passes up to {@code until}, each with its computes ahead of it, and the computes of programs that
+	 * draw nothing at their moment among them.
+	 *
+	 * @param stage the family that ends there: what stands alone in it runs even with no pass after it
+	 */
+	private void runPasses(VkCommandBuffer cmd, MemoryStack stack, int until, String stage) {
 		List<ChainPlan.Pass> passes = this.chain.chain().passes();
 		VulkanImage screen = screen();
 		this.values.renderStage(RenderStage.NONE);
 		for (; this.nextPass < Math.min(until, passes.size()); this.nextPass++) {
+			String program = passes.get(this.nextPass).program();
 			// Each pass in a frame of its own: the stack is 64 KiB, a pack may have dozens of them, and running
 			// out of it is an Error that nothing here would catch.
 			try (MemoryStack frame = stack.push()) {
+				dispatchAlone(cmd, frame, screen, alone -> ProgramNames.before(alone.program(), program));
+				dispatchBefore(cmd, frame, screen, program);
 				drawFullscreen(cmd, frame, passes.get(this.nextPass), screen);
 			}
+		}
+		int rank = ProgramNames.frameRank(stage);
+		dispatchAlone(cmd, stack, screen, alone -> ProgramNames.frameRank(ProgramNames.familyOf(alone.program())) <= rank);
+	}
+
+	private void dispatchBefore(VkCommandBuffer cmd, MemoryStack stack, VulkanImage screen, String program) {
+		List<PackComputes.Dispatch> attached = this.computes.before(program);
+		if (attached.isEmpty()) return;
+		dispatch(cmd, stack, attached, this.chain.targets().schedule().step(program).orElse(null), screen.width, screen.height);
+	}
+
+	private void dispatchAlone(VkCommandBuffer cmd, MemoryStack stack, VulkanImage screen, java.util.function.Predicate<PackComputes.Alone> due) {
+		List<PackComputes.Alone> waiting = this.computes.alone();
+		while (this.nextAlone < waiting.size() && due.test(waiting.get(this.nextAlone))) {
+			PackComputes.Alone alone = waiting.get(this.nextAlone++);
+			dispatch(cmd, stack, alone.dispatches(), alone.step(), screen.width, screen.height);
+		}
+	}
+
+	/**
+	 * Computes of one moment, outside any pass, on the halves {@code step} stands on, with Iris's barriers: one
+	 * ahead of each dispatch ({@code ComputeProgram.dispatch}), one behind them all for what reads the results.
+	 * {@link #writeDescriptors} moves what they store and read into its layout on the way.
+	 */
+	private void dispatch(VkCommandBuffer cmd, MemoryStack stack, List<PackComputes.Dispatch> dispatches,
+			TargetSchedule.Bound step, int width, int height) {
+		if (dispatches.isEmpty()) return;
+		this.dispatchStep = step;
+		try {
+			for (PackComputes.Dispatch dispatch : dispatches) {
+				if (this.computes.failed(dispatch)) continue;
+				try (MemoryStack frame = stack.push()) {
+					dispatchOne(cmd, frame, dispatch, width, height);
+				} catch (RuntimeException e) {
+					this.computes.fail(dispatch, e);
+				}
+			}
+			PackStorage.barrier(cmd, stack);
+		} finally {
+			this.dispatchStep = null;
+		}
+	}
+
+	private void dispatchOne(VkCommandBuffer cmd, MemoryStack stack, PackComputes.Dispatch dispatch, int width, int height) {
+		PackPipeline pipeline = dispatch.pipeline();
+		long[] indirect = dispatch.indirect();
+		StorageBuffer counts = indirect == null ? null : this.storage.buffer((int) indirect[0]);
+		if (indirect != null && counts == null) throw new IllegalStateException("indirect." + dispatch.name() + " names no buffer");
+		int[] groups = indirect == null ? dispatch.compute().groupsAt(width, height) : null;
+		// Nought is how a pack turns a pass off.
+		if (groups != null && (groups[0] <= 0 || groups[1] <= 0 || groups[2] <= 0)) return;
+		long set = allocateSet(stack, pipeline.setLayout());
+		writeDescriptors(stack, set, pipeline, dispatch.compute().loaded(), dispatch.block(), List.of(), null,
+				new GameImages(null, null, null), null);
+		long handle = pipeline.compute();
+		PackStorage.barrier(cmd, stack);
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, handle);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout(), 0, stack.longs(set), null);
+		if (groups != null) {
+			vkCmdDispatch(cmd, groups[0], groups[1], groups[2]);
+		} else {
+			vkCmdDispatchIndirect(cmd, counts.handle(), indirect[1]);
 		}
 	}
 
@@ -692,7 +784,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (this.deferredDone) return;
 		this.deferredDone = true;
 		copyDepth(cmd, stack, this.depth, this.depthNoTranslucent);
-		runPasses(cmd, stack, this.chain.chain().deferredEnd());
+		runPasses(cmd, stack, this.chain.chain().deferredEnd(), "deferred");
 	}
 
 	/** {@code depthtex2}: everything opaque but the hand. Iris copies it at the same moment ({@code beginHand}). */
@@ -727,7 +819,7 @@ public final class PackRenderer implements AutoCloseable {
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
 			renderer.endRenderPass(cmd);
 			openFrame(cmd, stack);
-			runPasses(cmd, stack, this.chain.chain().prepareEnd());
+			runPasses(cmd, stack, this.chain.chain().prepareEnd(), "prepare");
 			if (pass == TerrainPass.TRANSLUCENT) {
 				deferred(cmd, stack);
 				WorldRenderer world = WorldRenderer.getInstance();
@@ -1073,7 +1165,7 @@ public final class PackRenderer implements AutoCloseable {
 	 * cast, the copy without translucents, translucent terrain. The prepare passes read the map of this
 	 * frame, so they run behind it. Iris's order ({@code shadows/ShadowRenderer.java}).
 	 */
-	private void openAndShadow(net.minecraft.client.Camera camera, float tick) {
+	private void openAndShadow(net.minecraft.client.Camera camera) {
 		var position = camera.getPosition();
 		double camX = position.x, camY = position.y, camZ = position.z;
 		Renderer renderer = Renderer.getInstance();
@@ -1094,7 +1186,7 @@ public final class PackRenderer implements AutoCloseable {
 			}
 			if (map && casters.anyFeature()) {
 				List<RenderSection> sections = areas.stream().flatMap(area -> area.sections().stream()).toList();
-				ShadowFeatures.render(this.values, camera, tick, sections, casters);
+				ShadowFeatures.render(this.values, camera, sections, casters);
 				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
 				renderer.endRenderPass(cmd);
 			}
@@ -1106,7 +1198,7 @@ public final class PackRenderer implements AutoCloseable {
 			if (this.shadow.depthNoTranslucent().mipLevels > 1) mipChain(cmd, stack, this.shadow.depthNoTranslucent(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_FILTER_NEAREST);
 			if (!areas.isEmpty()) ShadowAmortisation.drawn();
 			runShadowComposites(cmd, stack);
-			runPasses(cmd, stack, this.chain.chain().prepareEnd());
+			runPasses(cmd, stack, this.chain.chain().prepareEnd(), "prepare");
 		}
 	}
 
@@ -1221,11 +1313,17 @@ public final class PackRenderer implements AutoCloseable {
 		this.shadowFlips.getOrDefault("shadowcomp_pre", Map.of()).forEach((index, flip) -> {
 			if (flip) this.shadow.flip(index);
 		});
-		for (Map.Entry<String, PackProgram.Loaded> entry : this.shadowComposites.entrySet()) {
-			String name = entry.getKey();
-			List<Integer> writes = shadowWrites(entry.getValue());
+		VulkanImage screen = screen();
+		for (String name : this.shadowCompositeOrder) {
+			// Sized off the screen, not the map (ShadowCompositeRenderer.renderAll). A slot may hold computes alone.
 			try (MemoryStack frame = stack.push()) {
-				shadowComposite(cmd, frame, name, entry.getValue(), writes);
+				dispatch(cmd, frame, this.computes.shadowComposite(name), null, screen.width, screen.height);
+			}
+			PackProgram.Loaded loaded = this.shadowComposites.get(name);
+			if (loaded == null) continue;
+			List<Integer> writes = shadowWrites(loaded);
+			try (MemoryStack frame = stack.push()) {
+				shadowComposite(cmd, frame, name, loaded, writes);
 			}
 			Map<Integer, Boolean> flips = this.shadowFlips.getOrDefault(name, Map.of());
 			for (int index : writes) if (flips.get(index) != Boolean.FALSE) this.shadow.flip(index);
@@ -1267,6 +1365,8 @@ public final class PackRenderer implements AutoCloseable {
 		this.shadowFresh = false;
 		clearDepth(cmd, stack, this.shadow.depth());
 		clearDepth(cmd, stack, this.shadow.depthNoTranslucent());
+		this.values.renderStage(RenderStage.NONE);
+		dispatch(cmd, stack, this.computes.shadow(), null, this.shadow.resolution(), this.shadow.resolution());
 		VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack)
 				.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(VK_REMAINING_MIP_LEVELS).layerCount(VK_REMAINING_ARRAY_LAYERS);
 		for (Map.Entry<Integer, VulkanImage> entry : this.shadow.colours().entrySet()) {
@@ -1301,9 +1401,10 @@ public final class PackRenderer implements AutoCloseable {
 			deferred(cmd, stack);
 			if (!this.preHandDepthCopied) copyDepth(cmd, stack, this.depth, this.depthNoHand);
 			seedFromGame(cmd, stack, screen);
-			runPasses(cmd, stack, Integer.MAX_VALUE);
+			runPasses(cmd, stack, Integer.MAX_VALUE, "composite");
 			Optional<ChainPlan.Pass> last = this.chain.chain().last();
 			if (last.isPresent()) {
+				dispatchBefore(cmd, stack, screen, last.get().program());
 				drawFullscreen(cmd, stack, last.get(), screen);
 			} else {
 				present(cmd, stack, screen);
@@ -1645,9 +1746,18 @@ public final class PackRenderer implements AutoCloseable {
 		SamplerPlan.Binding binding = loaded.samplers().binding(name);
 		if (binding != null && binding.kind() == SamplerPlan.Kind.COLOUR_IMAGE) {
 			PackTargets.Target target = this.targets.target(binding.index());
-			return target == null ? null : target.image(binding.side());
+			return target == null ? null : target.image(side(binding));
 		}
-		return null;
+		int shadowColour = PackComputes.shadowColourImage(name);
+		return shadowColour < 0 ? null : this.shadow.sampledColour(shadowColour);
+	}
+
+	/**
+	 * The half a name reads. A compute's own name is in no step of the schedule, so its plan answers main for
+	 * everything, and Iris binds it on the halves of the pass it hangs off.
+	 */
+	private TargetSchedule.Side side(SamplerPlan.Binding binding) {
+		return this.dispatchStep != null ? this.dispatchStep.read(binding.index()) : binding.side();
 	}
 
 	private VulkanImage sampled(PackPipeline.Slot slot, PackProgram.Loaded loaded, List<VulkanImage> outputs,
@@ -1681,7 +1791,7 @@ public final class PackRenderer implements AutoCloseable {
 				case COLORTEX -> {
 					PackTargets.Target target = this.targets.target(binding.index());
 					if (target != null) {
-						VulkanImage image = target.image(binding.side());
+						VulkanImage image = target.image(side(binding));
 						if (!outputs.contains(image)) return image;
 						if (this.warned.add("feedback:" + loaded.path() + ":" + sampler)) {
 							VitrailVk.LOGGER.warn("[pack] {} reads {} from the half it writes", loaded.path(), sampler);
@@ -1788,6 +1898,7 @@ public final class PackRenderer implements AutoCloseable {
 	public void close() {
 		if (this.storage != null) this.storage.close();
 		if (this.textureImages != null) this.textureImages.close();
+		if (this.computes != null) this.computes.close();
 		this.pipelines.values().forEach(PackPipeline::close);
 		this.pipelines.clear();
 		this.shadowCompositePipelines.values().forEach(PackPipeline::close);

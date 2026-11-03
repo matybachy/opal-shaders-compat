@@ -32,7 +32,7 @@ public abstract class LevelRendererMixin {
 	private void vitrailvk$beforeSky(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
 			GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix,
 			CallbackInfo ci) {
-		PackRenderer.beforeSky(camera, deltaTracker.getGameTimeDeltaPartialTick(true));
+		PackRenderer.beforeSky(camera);
 	}
 
 	@WrapMethod(method = "renderSky")

@@ -15,7 +15,7 @@ ověřeno proti zdrojům, ne funkční. Poslední skutečný běh je `test_terra
 | 3 Optiony, noisetex, mipmapy, blendy | hotovo v kódu |
 | 4 Stíny: terén, entity, block entity, `shadowcomp` (grafické), mipmapy | hotovo v kódu |
 | 5 Obloha, entity, ruka, částice, počasí, mraky | hotovo v kódu |
-| 6 Custom textury, image.*, SSBO | hotovo v kódu; **compute se při běhu nespouští** |
+| 6 Custom textury, image.*, SSBO, compute | hotovo v kódu |
 | 7 GUI výběru packu a nastavení | nezačato |
 | A Flywheel, Create, Colorwheel | nezačato |
 | B Ostatní mody včetně Mekanismu | obecná cesta entit a BER existuje, mapování nezačato |
@@ -31,8 +31,9 @@ začíná znovu. `ANALYSIS.md` je obnovená ve zkrácené podobě.
 - `./gradlew build`: `build/libs/vitrailvk-<verze>.jar`. VMR se při prvním buildu stáhne do `libs/` a ověří se
   jeho SHA-256 (`gradle.properties`).
 - `./gradlew checkPacks [-Ppacks=...] [-PdumpAll=true]`: bez hry přeloží a zkompiluje všechny programy packů
-  v `run/shaderpacks`, včetně rodin meshů tak, jak je načítá renderer (entity, obloha, částice, `shadow_entities`)
-  a grafických `shadowcomp`. BSL 10.1.8: 218/218 jednotek. Kontroluje i to, že každý vstup vertexu má zdroj.
+  v `run/shaderpacks`, včetně rodin meshů tak, jak je načítá renderer (entity, obloha, částice, `shadow_entities`),
+  grafických `shadowcomp` a compute. Kontroluje i to, že každý vstup vertexu má zdroj. Dřív u cesty s `.csh` i `.fsh`
+  přeskakoval grafickou půlku.
 - `scripts/autotest.sh [pack] [-Pautotest.options=A=b,C=d] [-Pautotest.camera=x,z,yaw,pitch,výška]
   [-Pautotest.time=6000]`: build, klient v autotest režimu, souhrn. Výstupy jsou v `run/autotest/`.
 - `scripts/pixel.py soubor.png x,y ...`: hodnoty pixelů bez závislostí.
@@ -88,6 +89,14 @@ vlastnosti `vitrailvk.pack` a `vitrailvk.options`. GUI zatím není.
 - **Barriéry** (`ImageLayouts`, `VulkanImageMixin`): přechody z/do `SHADER_READ_ONLY` a `GENERAL` jdou přes
   `ALL_COMMANDS`, protože VMR počítá jen se čtením ve fragmentu a `GENERAL` neumí, a packy čtou i ve vertexu. Platí
   i pro obrázky VMR; layout, který VMR sleduje, zůstává pravdivý. Globální bariéra jen pro program se storage.
+- **Compute** (`PackComputes`, `PackRenderer.dispatch`): okamžiky podle Iris. `setup` při každé nové velikosti targetů
+  (Iris: po konstrukci a při `changed`, `dispatch(1, 1)`), `shadow` po clearu hloubky mapy přes rozlišení mapy,
+  `shadowcompN` před svým průchodem přes rozměr obrazovky, `begin/prepare/deferred/composite/final` před svým průchodem;
+  program bez průchodu (`TargetPlan.passing()`) ve svém okamžiku, i když po něm v dané fázi nic nekreslí. Jako Iris:
+  bariéra před každým dispatchem a za celou skupinou, `colorimg`/`colortex` na půlkách daného průchodu
+  (`TargetSchedule.step`/`passing`), `shadowcolorimg`, `indirect.<stem>`. Nula skupin znamená vypnutý průchod. Compute,
+  který se nepřeloží nebo selže, vypadne sám a s logem, pack běží dál (Iris by odmítl celý pack; chybějící efekt je
+  menší škoda než vypnutý pack). Sdílená bariéra je `ALL_COMMANDS`: jednoduché a správné, ne nejrychlejší.
 - **Paměť a deskriptory** (`FrameArena`, `allocateSet`): rostou po stránkách místo selhání, recyklují se po čekání
   na fence daného slotu, ne dvakrát za snímek (mod může kreslit level víckrát).
 
@@ -164,18 +173,16 @@ Pořadí k vyzkoušení při prvním spuštění (`-Pvalidation=true`, sledovat 
 7. Complementary a pack s custom texturami, image.*, SSBO; pack s grafickým `shadowcomp`.
 8. Sledovat v logu `no program of the pack serves it`, `could not be loaded`, `reads ... from the half it writes`.
 
-Známé `TODO-VERIFY` v kódu: [HandPass.java](src/main/java/dev/vitrailvk/render/HandPass.java) (poloha, hloubka a světlo
-ruky proti Iris), [ShadowFeatures.java](src/main/java/dev/vitrailvk/render/ShadowFeatures.java) (vedlejší efekty
-druhého vykreslení entit v modech).
+Značky `TODO-VERIFY` v kódu nejsou. Ruka i stíny entit jsou ověřené proti `refs/Iris` (`pathways/HandRenderer`,
+`shadows/ShadowRenderer`): druhé vykreslení entit dělá Iris stejně, takže mod, kterému vadí, má stejný problém i pod Iris.
+Při ověření opraveno: stíny entit řadí podle typu (méně dávek), berou tick delta jako vanilla (`isEntityFrozen`, BER
+`false`), `shadowPlayer` bere i vozidlo a pasažéry; ruka se ptá na spánek entity kamery, ne hráče.
 
 ## Známé problémy a omezení
 
 - Baseline validace VMR 0.3.5 bez našeho vlivu: `VUID-vkQueueSubmit-pSignalSemaphores-00067`,
   `VUID-vkDestroyDevice-device-05137`.
 - Varování `Undefined-Value-ShaderOutputNotConsumed`: výstup `ofCoverage` z Vitrailu nemá attachment.
-- **Compute (`.csh`) se při běhu nespouští**, `PackProgram.loadCompute` používá jen `checkPacks`. Pack závislý na
-  výsledku compute (voxel, floodfill) to za běhu pozná jen chybějícím efektem. BSL ho má jen pro
-  `MULTICOLORED_BLOCKLIGHT`, který je ve výchozím stavu vypnutý.
 - Do stínu jdou jen sekce zkompilované grafem kamery, VMR jiné nemá.
 - `centerDepth` čte depth přímo, bez vyhlazení. `normals`/`specular` zatím neutrální, atlasy PBR se nenačítají.
 - Raw textury: packed, BGR, integer a rectangle zatím čtou černou. VBO s `transientGeometry` kreslí VMR.
@@ -184,19 +191,13 @@ druhého vykreslení entit v modech).
 
 ## Co zbývá
 
-1. **Compute při běhu.** V konstruktoru `PackRenderer` z `chain.targets().computes()` načíst `PackProgram.loadCompute`
-   a `PackPipeline.Kind.COMPUTE`, s úklidem při selhání. Dispatch mimo render pass, `Compute.groupsAt(w, h)`, nula může
-   být záměrné vypnutí, velikost nehádat, bariéry přes `ImageLayouts`. Časování podle `refs/Iris`
-   (`IrisRenderingPipeline`, `CompositeRenderer`, `ShadowCompositeRenderer`): setup jednou, `shadow` před mapou,
-   `shadowcomp` po ní, `begin`/`prepare`/`deferred`/`composite` před odpovídajícím grafickým slotem, i compute-only
-   sloty a písmena ve správném pořadí (`TargetPlan.passing()`, `ProgramNames.frameOrder()`, `TargetSchedule`).
-2. **GUI.** `dev/vitrail/pack/menu` je převzaté, `ShaderPacks.select`/`saveOptions` a `PackRenderer.reload` existují.
+1. **GUI.** `dev/vitrail/pack/menu` je převzaté, `ShaderPacks.select`/`saveOptions` a `PackRenderer.reload` existují.
    Chybí vstup ve video nastavení, obrazovky a rozlišení změny, která vyžaduje restart (jiný stride).
-3. **Flywheel, Create, Colorwheel.** VMR 0618965 má `compat/sable/flywheel` (`VulkanFlywheelBackend`,
+2. **Flywheel, Create, Colorwheel.** VMR 0618965 má `compat/sable/flywheel` (`VulkanFlywheelBackend`,
    `VulkanFlywheelBootstrap`), experimentální za vlastností `vulkanmod.compat.sable.flywheel.experimental`. To dokládá
    cestu, ne napojení na pack. Zdroje těch tří modů v `refs/` nejsou. Záchrana: Flywheel vypnout, Create přes vanilla BER.
-4. **Ostatní mody.** Mapování modovaných vrstev (Mekanism a další) na programy, případně minimální shim Iris API.
-5. **Distant Horizons.** Rozhraní DH, geometrie, matice, hloubka, `dh_terrain`, `dh_water`, `dh_shadow`, bez forku.
+3. **Ostatní mody.** Mapování modovaných vrstev (Mekanism a další) na programy, případně minimální shim Iris API.
+4. **Distant Horizons.** Rozhraní DH, geometrie, matice, hloubka, `dh_terrain`, `dh_water`, `dh_shadow`, bez forku.
 
 ## Reference: Iris-Vulkan-Port
 
