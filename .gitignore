@@ -10,3 +10,4 @@ tools/
 libs/
 release/
 test-instance/
+!run/baseline/

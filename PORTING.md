@@ -5,8 +5,8 @@ v [ANALYSIS.md](ANALYSIS.md).
 
 ## Stav
 
-Pozor: od položky 3 dál nic neběželo ve hře (pokyn „netestuj“). „Hotovo v kódu“ znamená přeloženo a staticky
-ověřeno proti zdrojům, ne funkční. Poslední skutečný běh je `test_terrain` před commitem `f79800c`.
+Pozor: „hotovo v kódu“ znamená přeloženo a staticky ověřeno proti zdrojům, ne funkční. Co opravdu běželo ve hře, je
+v části Výsledky Fáze 2.
 
 | Položka | Stav |
 |---|---|
@@ -52,6 +52,25 @@ Pack se vybírá ve hře: video nastavení VMR, vlevo dole **Shader packy...** (
 `config/vitrailvk.properties`, klíč `shaderPack`). Nastavení packu jsou v `shaderpacks/<pack>.txt`, stejném souboru
 jako u Iris. Systémové vlastnosti `vitrailvk.pack`, `vitrailvk.profile` a `vitrailvk.options` (autotest) mají přednost,
 dokud se pack nevybere ve hře.
+
+## Výsledky Fáze 2 (přerušeno limitem, 3. 11. 2026)
+
+Běh v čisté instanci (`scripts/instance.py`, čerstvý jar, NeoForge 21.1.228, RTX 5060 Ti, validation layers zapnuté):
+
+| Test | Výsledek |
+|---|---|
+| Start bez packu | funguje, validace jen baseline VMR |
+| `test_final`, `test_composite`, `test_terrain` | fungují, nové jen `Undefined-Value-ShaderOutputNotConsumed` |
+| `test_compute` | funguje: setup, begin bez průchodu, prepare bez průchodu, composite, `final` + `final_a` |
+| BSL, výchozí nastavení, jedna scéna, den | běží bez chyb v logu, viz `run/baseline/bsl_basic.png`; kvalitu obrazu je potřeba posoudit dál |
+
+Opraveno testem: `PackImage.upload` sahal na `GraphicsQueue.INSTANCE`, které VMR nikdy nenastaví (`DeviceManager.getGraphicsQueue()`).
+Zároveň se tím potvrdila záchrana: chyba packu skončila čistým VMR a textem v `lastError`.
+
+**Nespuštěno:** Complementary, Bliss (jen `checkPacks`), scény, Create, Mekanism, DH, GUI, regrese, FPS, Iris pro srovnání.
+Scény se píšou do `scripts/scenes/`. Pro Create, Mekanism a DH: `scripts/instance.py create NAME`, `install NAME`, jar modu
+z `test-instance/jars/` do `test-instance/NAME/mods/`. Compile ověřen: `checkPacks` i `-PdhVariant=true` čisté na BSL,
+Complementary a Bliss.
 
 ## Rozhodnutí
 
