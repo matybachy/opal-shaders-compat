@@ -9,7 +9,9 @@
     "VectorsOnVulkanMixin",
     "OpalImagesMixin",
     "OpalImageMixin",
-    "FlywheelShaderPackMixin"
+    "FlywheelShaderPackMixin",
+    "EveryCompatModulesMixin",
+    "DhChunkyMixin"
   ],
   "injectors": {
     "defaultRequire": 0

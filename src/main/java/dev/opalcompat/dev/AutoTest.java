@@ -1,6 +1,8 @@
 package dev.opalcompat.dev;
 
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.platform.TextureUtil;
 import dev.opalcompat.OpalCompat;
 import dev.opalcompat.pack.ShaderPacks;
 import dev.opalcompat.render.PackRenderer;
@@ -235,6 +237,16 @@ public final class AutoTest {
 				AbstractWidget widget = find(mc.screen.children(), rest);
 				if (widget == null) throw new IllegalArgumentException("No widget says " + rest);
 				click(mc, widget.getX() + widget.getWidth() / 2.0, widget.getY() + widget.getHeight() / 2.0, 0);
+			}
+			// An upload to a texture with no image yet, what Steam 'n' Rails does while the game loads.
+			case "emptyupload" -> {
+				int id = TextureUtil.generateTextureId();
+				GlStateManager._bindTexture(id);
+				try (NativeImage image = new NativeImage(1, 1, false)) {
+					image.upload(0, 0, 0, false);
+				}
+				TextureUtil.releaseTextureId(id);
+				this.notes.add("empty upload passed");
 			}
 			case "note" -> this.notes.add(rest);
 			case "error" -> this.notes.add("last error: " + PackRenderer.lastError().orElse("none"));

@@ -20,7 +20,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 NO_VULKAN = ["dev/opalcompat/OpalCompat.class", "dev/opalcompat/compat/Compat.class", "dev/opalcompat/compat/Mods.class",
              "dev/opalcompat/compat/CustomImageUnits.class", "dev/opalcompat/compat/mixin/CompatMixinPlugin.class",
              "dev/opalcompat/compat/mixin/OpalImagesMixin.class", "dev/opalcompat/compat/mixin/OpalImageMixin.class",
-             "dev/opalcompat/compat/mixin/FlywheelShaderPackMixin.class", "dev/opalcompat/mixin/OpalCompatMixinPlugin.class"]
+             "dev/opalcompat/compat/mixin/FlywheelShaderPackMixin.class", "dev/opalcompat/compat/mixin/EveryCompatModulesMixin.class",
+             "dev/opalcompat/compat/mixin/DhChunkyMixin.class", "dev/opalcompat/mixin/OpalCompatMixinPlugin.class"]
 
 
 def newest(directory, pattern):

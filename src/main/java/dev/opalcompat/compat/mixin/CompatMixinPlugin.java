@@ -13,7 +13,8 @@ import java.util.Set;
 
 /**
  * Each mixin applies where what it is for is in the game: {@code OpalOnVulkan} and {@code VectorsOnVulkan} on VulkanMod
- * Reforged, the rest of {@code Opal} and {@code Flywheel} with Opal as the renderer, on OpenGL.
+ * Reforged, the rest of {@code Opal} and {@code Flywheel} with Opal as the renderer, on OpenGL. {@code EveryCompat} and
+ * {@code DhChunky} on either.
  */
 public final class CompatMixinPlugin implements IMixinConfigPlugin {
 
@@ -42,6 +43,7 @@ public final class CompatMixinPlugin implements IMixinConfigPlugin {
 		String mixin = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
 		if (mixin.startsWith("OpalOnVulkan")) return Mods.OPAL && Mods.VULKAN;
 		if (mixin.startsWith("VectorsOnVulkan")) return Mods.VECTORS && Mods.VULKAN;
+		if (mixin.startsWith("EveryCompat") || mixin.startsWith("DhChunky")) return true;
 		return Mods.OPAL && !Mods.VULKAN;
 	}
 

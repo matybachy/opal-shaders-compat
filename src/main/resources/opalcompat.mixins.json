@@ -7,6 +7,7 @@
   "client": [
     "RendererMixin",
     "VulkanImageMixin",
+    "VTextureSelectorMixin",
     "TextureAtlasAccessor",
     "LevelRendererMixin",
     "LevelRendererAccessor",

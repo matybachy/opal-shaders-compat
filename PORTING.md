@@ -135,6 +135,28 @@ shader po průchodu vrací.
 **„Not building!“.** Očarovaná věc v ruce pack rovnou shodila (záchrana na čistý VMR zafungovala): ruka a stíny měly `MultiBufferSource`
 s jedním sdíleným bufferem a lesk ukončil rozepsaný předmět. `PassBuffers` je sada jako ve vanille.
 
+## Pády ve Stellarity (4. 11. 2026)
+
+Kopie 356 jarů a configů instance uživatele v `test-instance/stellarity`, paměť jako u něj (`--jvm=-Xmx15360m`), jeho složky beze změny.
+
+| Pád | Příčina a důkaz | Řešení |
+|---|---|---|
+| `Texture is null at index: 0` (report 22.24.34, v testu 18.18.39) | Railways nahrává sprite z ticku atlasu bloků (`PhantomSpriteManager.renderTick`), atlas má do konce načítání id bez obrazu a `VTextureSelector.uploadSubTexture` hází NPE. OpenGL i `GlTexture.texSubImage2D` z VMR to přeskočí. | `VTextureSelectorMixin` |
+| `Cannot get config value before config is loaded` (22.17.11, v testu 18.20.19, tam bez `opalcompat`) | `ConcurrentModificationException` v `EveryCompat.forAllModules`: `addModule` je `synchronized`, procházení ne, a VanillaBackport, No Man's Land, Gems Realm přidávají moduly ze svých konstruktorů. NeoForge pak nenačte configy a padne první tick. | `EveryCompatModulesMixin` |
+| `OutOfMemoryError` / vis na plné paměti | Sada bez FerriteCore, viz `BLOCKERS.md`. | FerriteCore vrátit do `mods` |
+| `Chunky is not loaded` při vytvoření světa (19.18.02) | DH 3.3.3 se váže na Chunky při prvním chunku, Chunky vzniká až v `ServerStartingEvent`, po načtení prvních chunků. | `DhChunkyMixin` |
+
+**Výsledek.** Finální jar, FerriteCore, G1, 15 GB: atlas 16384x8192, nový svět, vstup, `status=OK`, bez pádu. Regrese: pack, Create,
+Mekanism, DH, Railways `status=OK`, log bez chyb modu.
+
+**Časování `Texture is null`.** VMR pustí upload jen v posledním ticku snímku (`SpriteUtil.setDoUpload(j == n)`, `MSpriteContents.checkUpload`), jinak ho
+zahodí. Pád proto závisí na tom, jak dlouhý je snímek v té chvíli: ze šesti běhů s modem, které tam došly, nastal ve dvou (oba se starým jarem), v jediném
+bez modu ne. V zásobníku kód modu není a `SpriteUtil` nevolá. Přesný test je příkaz `emptyupload` (scéna `emptyupload.txt`), jde bez Railways: bez mixinu
+`NullPointerException: Texture is null at index: 0`, s ním `empty upload passed`, log bez chyb.
+
+**Every Compat.** Bez opravy nastalo ve 2 z 6 startů, s ní v 0 ze 4. To samo o sobě moc neříká, důkaz je export bajtkódu: `forAllModules` prochází
+`redirect$...$opalcompat$copy`, `private static synchronized`, tedy kopii pod zámkem třídy, stejným jako `addModule`.
+
 ## Výsledky Fáze 2 (přerušeno limitem, 3. 11. 2026)
 
 Běh v čisté instanci (`scripts/instance.py`, čerstvý jar, NeoForge 21.1.228, RTX 5060 Ti, validation layers zapnuté):
@@ -303,6 +325,7 @@ statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žád
 | `GameRendererAccessor`, `LevelRendererAccessor`, `TextureAtlasAccessor`, `BiomesMixin` | `getFov`, `bobHurt`, `bobView`, `renderHand`, `renderEntity`, statické `Biomes.register` | ano |
 | `VboMixin`, `VboAccessor` | `VBO.drawWithShader(..., ShaderInstance)`, pole `VBO` | ne |
 | `VulkanImageMixin` | statické `VulkanImage.transitionImageLayout(MemoryStack, VkCommandBuffer, VulkanImage, int)` | ne |
+| `VTextureSelectorMixin` | statické `VTextureSelector.uploadSubTexture` (HEAD) | ne |
 | `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor` | ne |
 | `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | terén VMR | ne |
 | `CustomVertexFormatMixin`, `TerrainBufferBuilderMixin`, `DeviceManagerMixin` | formát, builder, `createLogicalDevice` | ne |
@@ -310,7 +333,8 @@ statičnosti a toho, že jméno bez descriptoru ukazuje na jedinou metodu. Žád
 `@WrapMethod` a `@WrapOperation` potřebují MixinExtras 0.4+, NeoForge 21.1.228 nese 0.5.3 a VMR je používá také.
 
 Balík `compat` má vlastní config s `required: false` a `@Pseudo`, změna cizího modu ho nesmí shodit: `OpalOnVulkanMixin` a
-`VectorsOnVulkanMixin` jen s VMR, `OpalImagesMixin`, `OpalImageMixin` a `FlywheelShaderPackMixin` jen bez něj.
+`VectorsOnVulkanMixin` jen s VMR, `OpalImagesMixin`, `OpalImageMixin` a `FlywheelShaderPackMixin` jen bez něj, `EveryCompatModulesMixin` a `DhChunkyMixin`
+vždy, když je jejich cíl ve hře.
 
 ## Neověřeno za běhu
 
@@ -323,6 +347,9 @@ Co běželo, je ve Výsledcích na Vulkanu. Vědomě vynechané nebo nespuštěn
 - Měření FPS a srovnání s Irisem: rozhodnutí uživatele. Mimochodem jediné číslo: pack a všechny mody s DH, 854x480, 80 FPS, 1 % low 36.
 - Jar VMR z instance uživatele se od toho z GitHubu liší (5e4b09e8, 20 537 547 B proti 61a1c215, 20 537 626 B), verze stejná. Testy běžely
   na tom z GitHubu.
+- Sada Stellarity: běžela bez shader packu, s G1 a jarem VMR z GitHubu (liší se od jaru uživatele jedinou třídou GUI,
+  `DiagnosticsPageContent$DiagnosticsList`). Pack na téhle sadě, ZGC s FerriteCore a delší hraní neověřené. Stejně tak jestli DH po startu Chunky opravdu
+  dostane jeho události: ověřený je jen vstup do světa bez pádu.
 - Velká scéna v Create, vytvořený multiblok v Mekanismu (dynamická nádrž stojí, formování neověřené), hranice světa, praskliny při kopání,
   efekt ohně přes obraz, záře.
 

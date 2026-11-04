@@ -10,6 +10,25 @@ nejde: `sodiumdynamiclights` podle Modrinthu vyžaduje Sodium, Sodium s VMR nepo
 Addon navíc staví na LambDynLights API, takže by bez toho stejně nic nedělal. **Z instance ho vyřaď.**
 Vydávat se za `sodiumdynamiclights` je mimo hru: stejný důvod jako u id `iris`.
 
+## Velká sada bez FerriteCore se nevejde do 15 GB
+
+Tvá sada má 3,3 milionu `BlockState` (Every Compat přidává 55 836 bloků). Bez FerriteCore je živých 8,9 GB hned na začátku načítání
+zdrojů a 15,4 GB po třech minutách (`jcmd GC.class_histogram`: 33 milionů `ImmutableMapEntry`, 15 milionů podmínek multipart modelů).
+Výsledek je `OutOfMemoryError` v `Rendering overlay` (G1), nebo se ZGC hra visí na plné paměti. Opal Compat na tom nic nezmění, mod
+tu paměť nezabírá. **Vrať do `mods` `ferritecore-7.0.3-neoforge.jar`**, v říjnové sadě byl. S ním je živých 4,5 GB a 8,6 GB.
+
+I tak je to těsné: krátce po vstupu do nového světa 14,2 GB živých z 15,36 GB, dokud EMI peče recepty (8,3 milionu `ItemEmiStack`). **Vyhoď
+`-XX:+UseZGC -XX:+ZGenerational`:** ZGC nemá komprimované ukazatele, takže stejná data zabírají víc. Se ZGC a FerriteCore jsem to nezkoušel, s G1 ano.
+Máš-li volnou RAM, přidej i heap.
+
+## Chyby jiných modů, které obchází Opal Compat
+
+Správná oprava patří k nim. Kdyby ji udělali, mixin je zbytečný, ale nevadí.
+
+- **VMR:** `VTextureSelector.uploadSubTexture` hází NPE na upload do textury bez obrazu, `GlTexture.texSubImage2D` ho přeskočí. `VTextureSelectorMixin`.
+- **Every Compat 2.11.56:** `forAllModules` prochází moduly bez zámku, který `addModule` drží. `EveryCompatModulesMixin`.
+- **Distant Horizons 3.3.3 s Chunky 1.4.23:** `ChunkyAccessor` volá `ChunkyProvider.get()` dřív, než Chunky vznikne. `DhChunkyMixin`.
+
 ## Fabulous grafika na VMR
 
 VMR ji nepodporuje: `GraphicsModeCompatibility.supportedModes()` nabízí jen Fast a Fancy a v logu píše
