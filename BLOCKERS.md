@@ -1,49 +1,50 @@
 # BLOCKERS.md
 
-Co nejde opravit v tomhle repozitáři, protože to vyžaduje zásah do jiného modu nebo do jeho sestavení.
+What can't be fixed in this repository, because it takes a change to another mod or to how that mod is built.
 
-## `create-dyn-light` (Create Dynamic Light 2.0.1) se nenačte
+## `create-dyn-light` (Create Dynamic Light 2.0.1) does not load
 
-Hra skončí chybou `Mod createdynlight requires sodiumdynamiclights 1.0.0 or above`. Mod má závislost zapsanou jako
-`mandatory=false`, jenže `neoforge.mods.toml` pro NeoForge 1.21 čte `type`, a bez něj je závislost povinná. Doplnit ji
-nejde: `sodiumdynamiclights` podle Modrinthu vyžaduje Sodium, Sodium s VMR nepoběží a Opal se při něm sám vypne.
-Addon navíc staví na LambDynLights API, takže by bez toho stejně nic nedělal. **Z instance ho vyřaď.**
-Vydávat se za `sodiumdynamiclights` je mimo hru: stejný důvod jako u id `iris`.
+The game stops with `Mod createdynlight requires sodiumdynamiclights 1.0.0 or above`. The mod declares that dependency as
+`mandatory=false`, but `neoforge.mods.toml` for NeoForge 1.21 reads `type`, and without it the dependency is required. It can't
+be supplied: according to Modrinth `sodiumdynamiclights` requires Sodium, Sodium will not run with VMR, and Opal turns itself off
+next to it. The addon also builds on the LambDynLights API, so it would do nothing without that anyway. **Remove it from the
+instance.** Posing as `sodiumdynamiclights` is out of the question, for the same reason as the id `iris`.
 
-## Velká sada bez FerriteCore se nevejde do 15 GB
+## A large mod set without FerriteCore does not fit in 15 GB
 
-Tvá sada má 3,3 milionu `BlockState` (Every Compat přidává 55 836 bloků). Bez FerriteCore je živých 8,9 GB hned na začátku načítání
-zdrojů a 15,4 GB po třech minutách (`jcmd GC.class_histogram`: 33 milionů `ImmutableMapEntry`, 15 milionů podmínek multipart modelů).
-Výsledek je `OutOfMemoryError` v `Rendering overlay` (G1), nebo se ZGC hra visí na plné paměti. Opal Compat na tom nic nezmění, mod
-tu paměť nezabírá. **Vrať do `mods` `ferritecore-7.0.3-neoforge.jar`**, v říjnové sadě byl. S ním je živých 4,5 GB a 8,6 GB.
+The set this was measured on has 3.3 million `BlockState`s (Every Compat adds 55,836 blocks). Without FerriteCore 8.9 GB is live
+right at the start of the resource load and 15.4 GB three minutes later (`jcmd GC.class_histogram`: 33 million `ImmutableMapEntry`,
+15 million multipart model conditions). The result is `OutOfMemoryError` in `Rendering overlay` (G1), or with ZGC a game hanging on
+a full heap. Opal Compat can't change that, and it is not what takes that memory. **Put `ferritecore-7.0.3-neoforge.jar` in `mods`.**
+With it 4.5 GB and 8.6 GB are live at the same two points.
 
-I tak je to těsné: krátce po vstupu do nového světa 14,2 GB živých z 15,36 GB, dokud EMI peče recepty (8,3 milionu `ItemEmiStack`). **Vyhoď
-`-XX:+UseZGC -XX:+ZGenerational`:** ZGC nemá komprimované ukazatele, takže stejná data zabírají víc. Se ZGC a FerriteCore jsem to nezkoušel, s G1 ano.
-Máš-li volnou RAM, přidej i heap.
+It is still tight: shortly after joining a new world 14.2 GB of 15.36 GB is live, while EMI bakes its recipes (8.3 million
+`ItemEmiStack`). **Drop `-XX:+UseZGC -XX:+ZGenerational`:** ZGC has no compressed pointers, so the same data takes more room. ZGC
+with FerriteCore was not tried, G1 was. With RAM to spare, raise the heap too.
 
-## Chyby jiných modů, které obchází Opal Compat
+## Bugs of other mods that Opal Compat works around
 
-Správná oprava patří k nim. Kdyby ji udělali, mixin je zbytečný, ale nevadí.
+The right fix belongs with them. Once they make it, the mixin is unnecessary but does no harm.
 
-- **VMR:** `VTextureSelector.uploadSubTexture` hází NPE na upload do textury bez obrazu, `GlTexture.texSubImage2D` ho přeskočí. `VTextureSelectorMixin`.
-- **Every Compat 2.11.56:** `forAllModules` prochází moduly bez zámku, který `addModule` drží. `EveryCompatModulesMixin`.
-- **Distant Horizons 3.3.3 s Chunky 1.4.23:** `ChunkyAccessor` volá `ChunkyProvider.get()` dřív, než Chunky vznikne. `DhChunkyMixin`.
+- **VMR:** `VTextureSelector.uploadSubTexture` throws an NPE on an upload to a texture with no image, `GlTexture.texSubImage2D` skips it. `VTextureSelectorMixin`.
+- **Every Compat 2.11.56:** `forAllModules` walks the modules without the lock `addModule` holds. `EveryCompatModulesMixin`.
+- **Distant Horizons 3.3.3 with Chunky 1.4.23:** `ChunkyAccessor` calls `ChunkyProvider.get()` before Chunky exists. `DhChunkyMixin`.
 
-## Fabulous grafika na VMR
+## Fabulous graphics on VMR
 
-VMR ji nepodporuje: `GraphicsModeCompatibility.supportedModes()` nabízí jen Fast a Fancy a v logu píše
-`fabulous graphics mode not supported, forcing fancy`. Když ji někdo vynutí přímo (vanilla obrazovka přes Shift+P,
-test `graphics fabulous`), objeví se `VUID-vkCmdDrawIndexed-imageLayout-00344`, `VUID-VkImageMemoryBarrier-oldLayout-01197`,
-`VUID-vkCmdDraw-None-09600` a `VUID-vkCmdDrawIndexed-None-08608`. Čistý VMR bez packu dává stejné hlášky.
+VMR does not support it: `GraphicsModeCompatibility.supportedModes()` offers only Fast and Fancy and the log says
+`fabulous graphics mode not supported, forcing fancy`. When it is forced directly (the vanilla screen through Shift+P,
+the test command `graphics fabulous`), `VUID-vkCmdDrawIndexed-imageLayout-00344`, `VUID-VkImageMemoryBarrier-oldLayout-01197`,
+`VUID-vkCmdDraw-None-09600` and `VUID-vkCmdDrawIndexed-None-08608` appear. Plain VMR without a pack gives the same messages.
 
 ## `VUID-vkResetCommandBuffer-commandBuffer-00045`
 
-Vzácná hláška (2 z asi 20 běhů), jeden výskyt krátce po startu. `vkResetCommandBuffer` volá jen VMR
-(`Renderer.java:265`, `CommandPool.java:150`, `Vulkan.java:444`), Opal Compat ho nevolá. Bez viditelných následků.
+A rare message (2 of about 20 runs), one of them shortly after startup. Only VMR calls `vkResetCommandBuffer`
+(`Renderer.java:265`, `CommandPool.java:150`, `Vulkan.java:444`), Opal Compat does not. No visible effect.
 
-## `Matrix4fM` ve VMR se na NeoForge neaplikuje
+## VMR's `Matrix4fM` is not applied on NeoForge
 
-Mixin do `org.joml.Matrix4f` má vynutit hloubku 0..1, ale JOML se nenačítá přes transformer: export mixinů
-(`-Dmixin.debug.export=true`) nemá nic pod `org/joml`. Matice jsou ve tvaru OpenGL [-1,1] a VMR jim ořezává polovinu rozsahu
-hloubky (near vychází 0,1 místo 0,05). Opal Compat s tím teď počítá. Kdyby VMR tohle opravil, `LevelCapture.glToReversed`
-se musí upravit.
+The mixin into `org.joml.Matrix4f` is meant to force depth 0..1, but JOML is not loaded through the transformer: the mixin export
+(`-Dmixin.debug.export=true`) has nothing under `org/joml`. The matrices are in OpenGL form [-1,1] and VMR clips half of their depth
+range (near comes out as 0.1 instead of 0.05). Opal Compat now counts on that. If VMR fixes this, `LevelCapture.glToReversed`
+has to change.
