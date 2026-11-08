@@ -348,8 +348,10 @@ final class PackPipeline implements AutoCloseable {
 			info.stage().sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT)
 					.module(this.modules.get(ProgramStage.COMPUTE)).pName(stack.UTF8("main"));
 			LongBuffer handle = stack.mallocLong(1);
-			Vk.check(vkCreateComputePipelines(Vk.device(), VK_NULL_HANDLE, info, null, handle),
+			long started = System.nanoTime();
+			Vk.check(vkCreateComputePipelines(Vk.device(), PipelineCache.handle(), info, null, handle),
 					"vkCreateComputePipelines " + this.name);
+			PipelineCache.created(started);
 			this.computePipeline = handle.get(0);
 			return this.computePipeline;
 		}
@@ -488,8 +490,10 @@ final class PackPipeline implements AutoCloseable {
 					.pDepthStencilState(depth).pColorBlendState(colourBlend).pDynamicState(dynamic)
 					.layout(this.layout).renderPass(renderPass).subpass(0);
 			LongBuffer handle = stack.mallocLong(1);
-			Vk.check(vkCreateGraphicsPipelines(Vk.device(), VK_NULL_HANDLE, info, null, handle),
+			long started = System.nanoTime();
+			Vk.check(vkCreateGraphicsPipelines(Vk.device(), PipelineCache.handle(), info, null, handle),
 					"vkCreateGraphicsPipelines " + this.name);
+			PipelineCache.created(started);
 			return handle.get(0);
 		}
 	}

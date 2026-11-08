@@ -47,6 +47,11 @@ public final class DhSupport {
 		if (ACTIVE) VkDhBridge.shadow(water);
 	}
 
+	/** The far water, ahead of the world's: the one fades out onto the other. */
+	public static void waterBeforeWorld() {
+		if (ACTIVE) VkDhBridge.waterBeforeWorld();
+	}
+
 	/** What the frame just past really drew with: {near, far, blocks}, or null where it drew nothing. */
 	public static float[] planes() {
 		return ACTIVE ? VkDhBridge.planes() : null;

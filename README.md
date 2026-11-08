@@ -67,6 +67,7 @@ On Vulkan with NeoForge 21.1.265. The full list and the evidence are in [PORTING
 | Mekanism 10.7.19: machines, tanks, cables, generators | drawn with the pack |
 | Distant Horizons 3.3.3: LODs by day and night | works |
 | A 356-mod set with FerriteCore, G1 and 15 GB, without a shader pack | starts, creates a world and joins it |
+| A 184-mod set with Complementary Unbound + Euphoria Patches and DH, over deep water: near and far water meet | no wall or gap at the edge of the render distance |
 
 ## Known limitations
 
@@ -76,6 +77,7 @@ On Vulkan with NeoForge 21.1.265. The full list and the evidence are in [PORTING
 - Only sections compiled by the camera's graph go into the shadow map.
 - What a mod draws with direct OpenGL outside the game's render paths is missing from the image.
 - VulkanMod Reforged does not support Fabulous graphics.
+- The first time a pack or its settings are used, the game stops for up to a second whenever a new program is needed, for example at the first mob. The result is kept in `config/opalcompat_pipeline_cache.bin`, so later runs do not stop.
 
 More in [PORTING.md](PORTING.md#known-problems-and-limitations).
 

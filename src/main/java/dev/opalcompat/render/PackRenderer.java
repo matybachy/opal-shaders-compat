@@ -169,6 +169,7 @@ public final class PackRenderer implements AutoCloseable {
 	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
 	private static long frameSerial;
 	private static SpirvCompiler compiler;
+	private static final Set<List<String>> UNANSWERED_SAID = new HashSet<>();
 
 	private final String packName;
 	private final OpenedPack opened;
@@ -231,6 +232,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	private PackRenderer(Path packPath, String dimension) throws Exception {
 		long start = System.nanoTime();
+		UNANSWERED_SAID.clear();
 		boolean terrainMesh = TerrainFormat.EXTENDED;
 		Machine.install();
 		this.opened = OpenedPack.open(packPath, ShaderPacks.options(), ShaderPacks.profile());
@@ -385,8 +387,9 @@ public final class PackRenderer implements AutoCloseable {
 
 	static UniformBlock block(String name, PackProgram.Loaded loaded, UniformCatalog catalog) {
 		UniformBlock block = new UniformBlock(loaded.program().uniforms(), catalog);
-		if (!block.unanswered().isEmpty()) {
-			OpalCompat.LOGGER.info("[pack] {}: uniforms nothing answers yet (read as zero): {}", name, block.unanswered());
+		// The same few in nearly every program of a pack: said once, with the first program that asks.
+		if (!block.unanswered().isEmpty() && UNANSWERED_SAID.add(block.unanswered())) {
+			OpalCompat.LOGGER.info("[pack] uniforms nothing answers yet (read as zero), first in {}: {}", name, block.unanswered());
 		}
 		return block;
 	}
@@ -909,6 +912,7 @@ public final class PackRenderer implements AutoCloseable {
 		Optional<ChainPlan.Pass> plan = this.chain.chain().geometry(pass);
 		if (pipeline == null || loaded == null || plan.isEmpty()) return false;
 
+		if (pass == TerrainPass.TRANSLUCENT) DhSupport.waterBeforeWorld();
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
@@ -1599,12 +1603,36 @@ public final class PackRenderer implements AutoCloseable {
 			} else {
 				present(cmd, stack, screen);
 			}
+			swapBack(cmd, stack);
 			if (dumpPrefix != null) dumpTargets(cmd, stack);
 			screen.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 		}
 		if (!this.announced) {
 			this.announced = true;
 			OpalCompat.LOGGER.info("[pack] first frame drawn at {}x{}", screen.width, screen.height);
+		}
+		PipelineCache.saveWhenQuiet();
+	}
+
+	/**
+	 * The next frame reads the main half of everything again, so what the frame ended on in the alternate one
+	 * and is kept between frames comes back here, as in Iris's final pass. Without it a pack's history starts
+	 * every frame from its clear: temporal anti-aliasing has nothing to blend with and its noise stays on screen.
+	 */
+	private void swapBack(VkCommandBuffer cmd, MemoryStack stack) {
+		for (int index : this.chain.chain().swapBack()) {
+			PackTargets.Target target = this.targets.target(index);
+			if (target == null || target.alt() == null) continue;
+			VulkanImage from = target.alt();
+			VulkanImage to = target.main();
+			from.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+			to.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+			VkImageCopy.Buffer region = VkImageCopy.calloc(1, stack);
+			region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
+			region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
+			region.extent().set(from.width, from.height, 1);
+			vkCmdCopyImage(cmd, from.getId(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, to.getId(),
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
 		}
 	}
 
@@ -1619,7 +1647,10 @@ public final class PackRenderer implements AutoCloseable {
 		}
 		dump.depth(cmd, stack, this.depth, prefix + "_depthtex0.png");
 		dump.depth(cmd, stack, this.depthNoTranslucent, prefix + "_depthtex1.png");
-		if (this.distantDepth != null) dump.depth(cmd, stack, this.distantDepth, prefix + "_dhDepthTex0.png");
+		if (this.distantDepth != null) {
+			dump.depth(cmd, stack, this.distantDepth, prefix + "_dhDepthTex0.png");
+			dump.depth(cmd, stack, this.distantDepthNoWater, prefix + "_dhDepthTex1.png");
+		}
 		if (shadowWanted()) {
 			dump.depth(cmd, stack, this.shadow.depth(), prefix + "_shadowtex0.png");
 			for (Map.Entry<Integer, VulkanImage> entry : this.shadow.colours().entrySet()) {

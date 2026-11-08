@@ -29,6 +29,7 @@ The right fix belongs with them. Once they make it, the mixin is unnecessary but
 - **VMR:** `VTextureSelector.uploadSubTexture` throws an NPE on an upload to a texture with no image, `GlTexture.texSubImage2D` skips it. `VTextureSelectorMixin`.
 - **Every Compat 2.11.56:** `forAllModules` walks the modules without the lock `addModule` holds. `EveryCompatModulesMixin`.
 - **Distant Horizons 3.3.3 with Chunky 1.4.23:** `ChunkyAccessor` calls `ChunkyProvider.get()` before Chunky exists. `DhChunkyMixin`.
+- **VMR with Distant Horizons:** both draw from the head of `LevelRenderer.renderSectionLayer` and VMR comes first, so DH's deferred water lands after the world's. `DhSupport.waterBeforeWorld`.
 
 ## Fabulous graphics on VMR
 

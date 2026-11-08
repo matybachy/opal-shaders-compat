@@ -91,6 +91,7 @@ final class VkDhDefinition extends AbstractDhRenderApiDefinition {
 		int blocks = Config.Client.Advanced.Graphics.Quality.lodChunkRenderDistanceRadius.get() * 16;
 		boolean light = VkDhBridge.shadowPass();
 		if (!light) VkDhBridge.drew(near, far, blocks);
+		if (!light && !opaque && !VkDhBridge.takeWater()) return;
 
 		int count = containers.size();
 		float[] corners = new float[count * 3];

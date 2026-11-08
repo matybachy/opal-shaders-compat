@@ -157,6 +157,21 @@ run without the mod it did not. The mod's code is not on the stack and it does n
 **Every Compat.** Without the fix it happened in 2 of 6 starts, with it in 0 of 4. That alone says little; the proof is the bytecode export: `forAllModules` walks
 `redirect$...$opalcompat$copy`, `private static synchronized`, so a copy made under the lock of the class, the same one as `addModule`.
 
+## How DH and chunks looked (2026-11-08)
+
+No crash and no pack error in the logs of the Create instance: what was wrong showed only in the picture. Tested on a copy of its 184 jars and settings in
+`test-instance/createset` (Fast graphics, no AO, render distance 8, DH 3.3.3, Complementary Unbound + Euphoria), in singleplayer.
+
+| Symptom | Cause and proof | Solution |
+|---|---|---|
+| Dots, jagged edges, flicker, dark water | `ChainPlan.swapBack()` was never called. Dumps: `colortex2` main half blank, the image only in `_alt`. The pack reads last frame from the main half: TAA in `composite6`, reflections from `colortex7` at `composite.glsl:210`, both with `Clear = false`. | `PackRenderer.swapBack`, ALT to MAIN after the final pass, as in Iris's final pass. Dumps now show main equal to alt. |
+| Dark wall around the player where vanilla chunks end, water changing colour there | Order of hooks. The exported `LevelRenderer.renderSectionLayer` calls `vulkanmod$renderSectionLayer`, then `distanthorizons$renderChunkLayer`, so far water came after near water. `dh_water` discards where `depthtex0 < 1`, which then held the near water's depth, while `water.glsl:210` fades near water with no floor under it towards `far` to let the far water through. So nothing was there and the sea bed showed. A debug output from `dh_water` to `colortex11` (red material, green depth under the water, blue alpha) was black inside the ring, and is filled after the fix. | `DhSupport.waterBeforeWorld` from `terrainLayer`; `VkDhBridge.takeWater` drops DH's own later call. |
+| Stops of 0.5 to 1.3 s at the first mob, the first broken block | Timed: translating and SPIR-V about 100 ms a program, `vkCreateGraphicsPipelines` 500 to 1259 ms, 33 pipelines 11.8 s, nothing kept between runs. | `PipelineCache`, `config/opalcompat_pipeline_cache.bin`, header checked against the GPU. Next run: 21 pipelines in 29 ms. The log says `[pack] N pipelines built in M ms`. The first run of a new pack or new settings still pays. |
+| One log line of 1.8 MB, one hint repeated per program | 49,788 names of dropped blocks; the same two unanswered uniforms in every program. | 20 names in the log, all of them at debug level; said once per pack. |
+
+**Not verified:** a multiplayer server, which is where the user's log came from; whether the flicker is gone to the user's eye (two frozen frames differ by 0.71 per channel on
+average, and water and clouds keep moving; no comparison with the old jar, the user's decision); the first run of a pack, whose stops the cache does not help.
+
 ## Phase 2 results (interrupted by a limit, 2026-11-03)
 
 A run in a clean instance (`scripts/instance.py`, fresh jar, NeoForge 21.1.228, RTX 5060 Ti, validation layers on):
