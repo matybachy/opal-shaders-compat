@@ -279,6 +279,85 @@ Off with `chunkFlow=false` in `config/opalcompat.properties`.
 Not verified: all of it at run time, and whether invisible blocks are all of this kind; a block missing for another reason would show up as one that stays missing
 while `[chunks]` says the queue is empty.
 
+## Invisible blocks in a dense section: VulkanMod Reforged's 16-bit quad indices (2026-11-11)
+
+Built, not run: the user tests in the game.
+
+The report, after three builds that did not help: still invisible, and it is hoppers too, "simply more blocks", only around the user's base, where they join. Jade
+names the blocks and their outline is drawn; with the shader pack off it is the same; breaking a block beside one changes nothing. The section below made such
+sections get built, and the log of 18:11 says they were. So it is not whether a section is built but what is drawn of it.
+
+What VMR does, in the source under `refs/` and the same in the 0.3.5 jar (`javap`):
+
+- `Drawer`'s constructor makes `quadsIndexBuffer = new AutoIndexBuffer(QUAD_U16_MAX_VERTEX_COUNT, QUADS)`: 16-bit indices for 65536 vertices, 16384 quads.
+- `WorldRenderer.renderSectionLayer` binds exactly that buffer for the opaque layers and draws each section with its own `indexCount`
+  (`DrawBuffers.buildDrawBatchesDirect` and `buildDrawBatchesIndirect`).
+- `DrawBuffers.stageUpload` sets `staged.indexCount = buffer.indexCount` and asks nothing of the index buffer; the only callers of
+  `AutoIndexBuffer.checkCapacity` are `Drawer` and `VBO`, for immediate draws, and there `Drawer` switches to a second buffer of 32-bit indices past the 16-bit
+  reach (`count > U16_MAX_INDEX_COUNT ? quadsIntIndexBuffer : quadsIndexBuffer`). Terrain has no such switch.
+
+So a section layer with more than 16384 quads is drawn with indices read past the end of the buffer, which 16 bits could not express anyway: the first 16384
+quads of the layer appear and every block meshed after them does not. This mod's own terrain draw (`PackRenderer.drawSections`, `shadowLayer`) bound the same
+buffer, so it was the same with a pack.
+
+That the user's base has such layers is in their debug log of 18:39: `Needed to grow BufferBuilder buffer: Old size 4194304 bytes` on all eight builder threads
+between 3.3 and 4.4 s after the first frame, which is when the sections nearest the camera are built, and `Old size 8388928 bytes` on two. The 4 MB buffer is the
+opaque layer's (`RenderType.cutoutMipped().bufferSize()`; with `uniqueOpaqueLayer` every opaque block goes there, `BuildTask.compactRenderTypes`), a builder's buffer
+is emptied after each section (`RenderedBuffer.release`), and a vertex is 40 bytes here (`TerrainFormat.STRIDE`): more than 26214 quads in one layer, and more
+than 52430 in two builds. Without this mod's extended vertex the same layers would have 20 bytes a vertex and not outgrow the buffer, and would pass 16384 quads
+all the same: this is VMR's limit, not the extended format's.
+
+`terrain/TerrainIndices`: `DrawBuffersUploadMixin` reports each uploaded layer's `indexCount`; the largest is kept, and from the first layer past 65536 vertices
+terrain is bound to VMR's own 32-bit quad indices (`Drawer.quadsIntIndexBuffer`, through `DrawerAccessor`), grown to that size with `checkCapacity` as VMR grows it
+for its immediate draws. `WorldRendererMixin` hands that buffer to `renderSectionLayer` in place of the 16-bit one, `PackRenderer` binds it in its two terrain
+draws. `Drawer.bindIndexBuffer` binds with the buffer's own index type, and an index buffer that is replaced is freed through `MemoryManager.addToFreeable`, after
+the frames that may still use it. The first ten such layers are logged with their section's position and quad count, which is also the check that this is what the
+base has.
+
+Not helped: the translucent layer has sorted indices of its own, which `DrawBuffers.bindBuffers` binds as 16-bit whatever `VertexFormat.IndexType.least` chose for
+them; one with more than 65536 indices (10922 quads) is said once in the log.
+
+Not verified: all of it at run time.
+
+## Invisible stone and dirt where the player joins (2026-11-11)
+
+Built, not run: the user tests in the game.
+
+The report, with two screenshots: vanilla stone and dirt next to where the player joins the server are see-through. Jade names the block and its outline is
+drawn, so the client has it; the sky, and dark far terrain from Distant Horizons, show through. Placing or breaking a block beside it does not bring it back, and it
+is the same with the shader pack off.
+
+The user's `logs/debug.log` of 17:44 to 17:47: from 17:46:42 on, every spike line has `rQ 21+0` (21 sections ready for a rebuild), `prep 64x` and `build 0x`, with
+nothing in VMR's build queue. A ready rebuild that is prepared and never built is `RenderSection.createCompileTask` returning null, which it does on one condition:
+`ChunkStatusMap.INSTANCE.chunkRenderReady(secX, secZ)` is false. That needs the column and its eight neighbours to have both `DATA_READY` (set in
+`ClientLevelChunkLifecycleMixin` from `ClientLevel.onChunkLoaded`) and `LIGHT_READY` (set in `ClientPacketListenerM` from `applyLightData`). The section stays dirty,
+`SectionGraph.schedulePendingRebuilds` turns it down every frame, and a block change beside it only marks it dirty again. Why these columns lost their flags is not
+in the log; that the blocks are in the client's level is in the screenshots.
+
+`terrain/ChunkReadiness`, through `RenderSectionReadyMixin` on the `chunkRenderReady` call in `RenderSection.createCompileTask`: where VMR says no and
+vanilla's rule says yes, the section is built. Vanilla's rule is `SectionRenderDispatcher.RenderSection.hasAllNeighbors`: the chunks on the four sides exist
+(`doesChunkExistAt`); it does not wait for light, and a light update marks the sections dirty again (`ClientPacketListener.readSectionList`). So as not to build a
+section twice while its light is on the way, an unlit column (`LevelLightEngine.lightOnInSection`) waits while the client still has light to apply
+(`ClientLevel.isLightUpdateQueueEmpty`), five seconds at most, and asks for a graph update each frame meanwhile so it is tried again whether or not the player moves.
+The first ten such builds are logged with VMR's flags and which of the nine columns were missing or unlit, and the `[chunks]` line counts them.
+
+Two first attempts did not do it. The first marked the flags only where all nine columns were loaded and lit, and the log of 17:55 has
+`chunk -27 -186 and its neighbours are loaded, but 3 of the nine have no light yet at section 6`: the stone and dirt above the player (section 6 is y 96 to 111, the
+player stood at y 95), whose light never came. The second gave the light two seconds and still asked for all nine; the log of 18:00 says nothing either way, the
+player having left 40 seconds after joining, with the world still being built.
+
+That log has the other half. For the first 20 seconds after joining, frames took 0.4 to 6 s and VMR scheduled one section a frame (`prep 1x`) with 700 waiting
+(`rQ 665+0` to `rQ 707+0`): 1 section uploaded in 6 frames, then 15 in 11. Copying a section's blocks out of a chunk not copied before takes about 2 ms (`prep 1x
+2,38ms` at 17:46), more than VMR's time budget of 1, 0.75 or 0.5 ms, so one section is all a frame gets. `SectionGraphUrgencyMixin` now raises the budget to 16
+sections and 8 ms while more than 64 wait (`ChunkFlow.rebuilds`, `rebuildNanos`).
+
+A guard against stale entries in VMR's cache of chunks to build from (`RenderRegionBuilder.levelChunkCache`) was tried as well and taken out again: in the log of
+18:11 it replaced none in two and a half minutes.
+
+None of this was the invisible blocks: in that log 37 to 264 sections per 10 s were built that VMR held back, and the blocks stayed away. That is the section above.
+
+Not verified: all of it at run time, and why the flags and the light were lost.
+
 ## Frame rate: what the log of 2026-11-10 says, and a sampler for what it cannot (2026-11-10)
 
 Built, not run: the user tests in the game.
@@ -549,7 +628,9 @@ applies, so a wrong target brings the game down at startup.
 | `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | VMR's terrain | no |
 | `CustomVertexFormatMixin`, `TerrainBufferBuilderMixin`, `DeviceManagerMixin` | format, builder, `createLogicalDevice` | no |
 | `VulkanIdleMixin` | `Vulkan.waitIdle`, `Vulkan.cleanUp`: under `QueueLock` | no |
-| `TaskDispatcherFlowMixin`, `SectionGraphUrgencyMixin`, `BuildTaskUrgencyMixin`, `ChunkUploadCountMixin` | finished chunk sections uploaded past the ceiling while they wait, urgent ones first: `TaskDispatcher.getMaxUploadsPerFrame`, `schedule`, `pollTask`, `scheduleSectionUpdate`, `updateSections`, `clearBatchQueue`, `isIdle`; `SectionGraph.schedulePendingRebuilds`; `BuildTask.<init>`; `ChunkFrameDiagnostics.recordUploads` | no |
+| `RenderSectionReadyMixin`, `ChunkStatusMapAccessor` | `RenderSection.createCompileTask`: a section is built where vanilla would build it (`ChunkReadiness`); VMR's per-column flags, for its log line | no |
+| `DrawBuffersUploadMixin`, `DrawerAccessor` | `DrawBuffers.stageUpload`: the quads of each uploaded layer; VMR's 32-bit quad indices, which `WorldRendererMixin` and `PackRenderer` bind for terrain once a layer has more than 16384 quads (`TerrainIndices`) | no |
+| `TaskDispatcherFlowMixin`, `SectionGraphUrgencyMixin`, `BuildTaskUrgencyMixin`, `ChunkUploadCountMixin` | finished chunk sections uploaded past the ceiling while they wait, urgent ones first, and more rebuilds scheduled a frame while hundreds wait: `TaskDispatcher.getMaxUploadsPerFrame`, `schedule`, `pollTask`, `scheduleSectionUpdate`, `updateSections`, `clearBatchQueue`, `isIdle`; `SectionGraph.schedulePendingRebuilds`; `BuildTask.<init>`; `ChunkFrameDiagnostics.recordUploads` | no |
 | `SpriteContentsUseMixin`, `SpriteInterpolationUseMixin`, `TextureAtlasSpriteUseMixin`, `BakedQuadUseMixin`, `TextureAtlasCycleMixin`, `ModelBakeryUseMixin`, `BlockRendererUseMixin` | animated textures only once used: `SpriteContents.upload`, `InterpolationData.uploadInterpolatedFrame`, the sprite's coordinate getters, `BakedQuad.getVertices` and `getSprite`, `TextureAtlas.cycleAnimationFrames`, `ModelBakery.bakeModels`, VMR's `BlockRenderer.putQuadData` | no |
 | `DhDependencySetupMixin`, `DhMainMixin`, `DhRenderTasksMixin`, `DhRenderListMixin`, `DhClientWorldMixin`, `DhStartMixin`, `DhClientApiMixin` | Distant Horizons, only where `DhSupport.ACTIVE`: `setRenderingApiBindings`, `initializeModCompat`, `runRenderThreadTasks()`, `queueRunningOnRenderThread`, `buildRenderList`, `unloadLevel`, `logIncompatibilityWarnings`, `renderLods` | no |
 
@@ -569,6 +650,8 @@ What ran is in Results on Vulkan. Consciously left out or not run:
 - `AnimatedSprites` and its mixins, the new `PackSettingsScreen` and `ShaderPackScreen`: built, not run, for the same reason.
 - `RenderSampler` and the longer `[pack]` line of `FrameStats`: built, not run, for the same reason.
 - `ChunkFlow` and its four mixins: built, not run, for the same reason.
+- `ChunkReadiness`, `RenderSectionReadyMixin`, `ChunkStatusMapAccessor` and the larger rebuild budget: built, not run, for the same reason.
+- `TerrainIndices`, `DrawBuffersUploadMixin`, `DrawerAccessor`: built, not run, for the same reason.
 - Opal on OpenGL with Create, Mekanism and DH: ran only with Opal and Vectors, one scene. `FlywheelShaderPackMixin` did not run in the game
   and Opal has no `dh_*` programs. The user's decision: Vulkan is enough.
 - A run without VMR after merging into one mod: it last ran as two jars. Now it is verified only statically (`scripts/release.py` makes sure

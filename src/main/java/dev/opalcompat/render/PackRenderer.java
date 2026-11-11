@@ -1245,7 +1245,7 @@ public final class PackRenderer implements AutoCloseable {
 			double camX, double camY, double camZ) {
 		boolean translucent = type == TerrainRenderType.TRANSLUCENT;
 		if (!translucent) {
-			Renderer.getDrawer().bindIndexBuffer(cmd, Renderer.getDrawer().getQuadsIndexBuffer().getIndexBuffer());
+			Renderer.getDrawer().bindIndexBuffer(cmd, dev.opalcompat.terrain.TerrainIndices.buffer());
 		}
 		WorldRenderer world = WorldRenderer.getInstance();
 		StaticQueue<ChunkArea> areas = ((WorldRendererAccessor) world).opalcompat$sectionGraph().getChunkAreaQueue().queue();
@@ -1501,7 +1501,7 @@ public final class PackRenderer implements AutoCloseable {
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline(renderPass, outputs.size(), style));
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
 		if (type != TerrainRenderType.TRANSLUCENT) {
-			Renderer.getDrawer().bindIndexBuffer(cmd, Renderer.getDrawer().getQuadsIndexBuffer().getIndexBuffer());
+			Renderer.getDrawer().bindIndexBuffer(cmd, dev.opalcompat.terrain.TerrainIndices.buffer());
 		}
 		for (ShadowArea area : areas) {
 			if (!bindArea(cmd, stack, pipeline, area.area(), type, camX, camY, camZ)) continue;

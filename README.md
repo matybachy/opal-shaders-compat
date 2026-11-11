@@ -14,6 +14,8 @@ Client-side only. **Alpha:** tested on one GPU (RTX 5060 Ti) and a handful of sh
 - Keeps Opal's screens and keys working. Opal's own OpenGL renderer stands down, and the packs it asks for are drawn here.
 - Has pack screens of its own behind the Shaders group: a list of packs that filters by name, and a pack's settings with a search over all of its pages.
 - Uploads finished chunk sections as fast as VulkanMod Reforged's own frame budget allows while they wait, whatever its "Chunk Upload Ceiling" says, and builds and uploads the sections near the player and those they change first.
+- Draws every block of a chunk section however many it has: VulkanMod Reforged's terrain indices stop at 16384 quads a layer, past which a dense base shows only part of its blocks.
+- Builds a chunk section as soon as vanilla would, where VulkanMod Reforged would leave it unbuilt (blocks that are there and invisible, often where the player joins), and schedules more sections a frame while the world loads after joining.
 - Animates a texture only once something has drawn with it, which spares a large mod set hundreds of uploads twenty times a second. A switch in the Shaders group turns it off.
 - Draws Distant Horizons 3.3.3 LODs through a pack's `dh_*` programs, and with no pack on through DH's own terrain program on Vulkan, with its fog and far fade.
 - Draws Create and Mekanism with the pack. Flywheel falls back to `flywheel:off`, so Create's moving parts go through block entity renderers.
@@ -77,6 +79,7 @@ On Vulkan with NeoForge 21.1.265. The full list and the evidence are in [PORTING
 
 - Distant Horizons' clouds and beacons are not drawn. Without a shader pack its LODs have no ambient occlusion or anti-aliasing and no fade from the near chunks, and that route has been built but not yet run.
 - Normal and specular maps are neutral: PBR atlases are not loaded.
+- A chunk section with more than 10922 translucent quads (glass, water and the like) is drawn only in part: VulkanMod Reforged's sorted indices are 16-bit.
 - Packed, BGR, integer and rectangle raw textures read as black.
 - Only sections compiled by the camera's graph go into the shadow map.
 - What a mod draws with direct OpenGL outside the game's render paths is missing from the image.

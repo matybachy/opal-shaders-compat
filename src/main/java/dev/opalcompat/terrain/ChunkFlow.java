@@ -51,8 +51,29 @@ public final class ChunkFlow {
 	private static long frames;
 	private static long fullFrames;
 	private static long loggedAt = System.nanoTime();
+	private static long builtBefore;
+
+	/** More sections a frame while this many wait for a rebuild: hundreds, as after joining a world. */
+	private static final int BACKLOG = 64;
+	private static final int BACKLOG_REBUILDS = 16;
+	private static final long BACKLOG_REBUILD_NANOS = TimeUnit.MILLISECONDS.toNanos(8);
 
 	private ChunkFlow() {
+	}
+
+	/**
+	 * How many waiting sections are scheduled this frame. VulkanMod Reforged's budget is 8, 6 or 4 sections and 1, 0.75 or 0.5 ms
+	 * ({@code AdaptiveChunkUploadBudget}), and copying the blocks of a section out of a chunk not copied before takes about 2 ms
+	 * ({@code prep 1x 2,38ms} in the user's log), so after joining a world one section was scheduled a frame while 700 waited, at
+	 * one frame a second or less: the user's log of 2026-11-11 18:00 has 1 section uploaded in 6 frames and 15 in 11, the first
+	 * 20 seconds. With more than {@value #BACKLOG} waiting, 16 sections and 8 ms.
+	 */
+	public static int rebuilds(int budget, int waiting) {
+		return ENABLED && waiting > BACKLOG ? Math.max(budget, BACKLOG_REBUILDS) : budget;
+	}
+
+	public static long rebuildNanos(long budget, int waiting) {
+		return ENABLED && waiting > BACKLOG ? Math.max(budget, BACKLOG_REBUILD_NANOS) : budget;
 	}
 
 	/** How many sections may be uploaded this frame, from VulkanMod Reforged's own number and how many are waiting. */
@@ -98,11 +119,13 @@ public final class ChunkFlow {
 		long urgentNanos = URGENT_NANOS.sumThenReset();
 		long urgentMost = URGENT_MOST.getAndSet(0L);
 		long waited = WAITED_NANOS.sumThenReset();
-		if (uploaded > 0 || urgent > 0 || waited > 0) {
-			OpalCompat.LOGGER.info("[chunks] {} s: {} sections ({} MB) uploaded in {} frames, the queue of 64 full after {} of them; {} near the player or changed by them, ready {} ms on average and {} ms at most after they were scheduled; builders spent {} s in all handing meshes to the queue",
+		long held = ChunkReadiness.built() - builtBefore;
+		builtBefore += held;
+		if (uploaded > 0 || urgent > 0 || waited > 0 || held > 0) {
+			OpalCompat.LOGGER.info("[chunks] {} s: {} sections ({} MB) uploaded in {} frames, the queue of 64 full after {} of them; {} near the player or changed by them, ready {} ms on average and {} ms at most after they were scheduled; builders spent {} s in all handing meshes to the queue; {} sections built that VulkanMod Reforged held back",
 					TimeUnit.NANOSECONDS.toSeconds(now - loggedAt), uploaded, bytes >> 20, frames, fullFrames, urgent,
 					urgent == 0 ? "-" : String.format(Locale.ROOT, "%.0f", urgentNanos / 1.0e6 / urgent),
-					TimeUnit.NANOSECONDS.toMillis(urgentMost), String.format(Locale.ROOT, "%.1f", waited / 1.0e9));
+					TimeUnit.NANOSECONDS.toMillis(urgentMost), String.format(Locale.ROOT, "%.1f", waited / 1.0e9), held);
 		}
 		uploaded = bytes = frames = fullFrames = 0;
 		loggedAt = now;

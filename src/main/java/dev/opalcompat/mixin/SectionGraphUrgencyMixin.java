@@ -13,7 +13,8 @@ import org.spongepowered.asm.mixin.injection.At;
 
 /**
  * Which sections are urgent is VulkanMod Reforged's own call, made while the section is still marked dirty: changed by the
- * player, or near the camera. It goes with the task that is made for the section: {@link ChunkFlow}.
+ * player, or near the camera. It goes with the task that is made for the section: {@link ChunkFlow}. While hundreds of sections
+ * wait, as after joining a world, more of them are scheduled a frame than VulkanMod Reforged's budget allows: {@link ChunkFlow#rebuilds}.
  */
 @Mixin(value = SectionGraph.class, remap = false)
 public abstract class SectionGraphUrgencyMixin {
@@ -32,5 +33,29 @@ public abstract class SectionGraphUrgencyMixin {
 		} finally {
 			ChunkFlow.markNext(false);
 		}
+	}
+
+	@WrapOperation(method = "schedulePendingRebuilds", at = @At(value = "INVOKE",
+			target = "Lnet/vulkanmod/render/optimization/AdaptiveChunkUploadBudget;chooseRebuildScheduleBudget(I)I"))
+	private int opalcompat$adaptiveCount(int waiting, Operation<Integer> original) {
+		return ChunkFlow.rebuilds(original.call(waiting), waiting);
+	}
+
+	@WrapOperation(method = "schedulePendingRebuilds", at = @At(value = "INVOKE",
+			target = "Lnet/vulkanmod/render/optimization/ChunkSchedulingPolicy;fixedRebuildScheduleBudget(I)I"))
+	private int opalcompat$fixedCount(int waiting, Operation<Integer> original) {
+		return ChunkFlow.rebuilds(original.call(waiting), waiting);
+	}
+
+	@WrapOperation(method = "schedulePendingRebuilds", at = @At(value = "INVOKE",
+			target = "Lnet/vulkanmod/render/optimization/AdaptiveChunkUploadBudget;chooseRebuildScheduleTimeBudgetNanos(I)J"))
+	private long opalcompat$adaptiveTime(int waiting, Operation<Long> original) {
+		return ChunkFlow.rebuildNanos(original.call(waiting), waiting);
+	}
+
+	@WrapOperation(method = "schedulePendingRebuilds", at = @At(value = "INVOKE",
+			target = "Lnet/vulkanmod/render/optimization/ChunkSchedulingPolicy;fixedRebuildTimeBudgetNanos(I)J"))
+	private long opalcompat$fixedTime(int waiting, Operation<Long> original) {
+		return ChunkFlow.rebuildNanos(original.call(waiting), waiting);
 	}
 }
