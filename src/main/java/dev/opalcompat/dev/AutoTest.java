@@ -5,6 +5,7 @@ import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.platform.TextureUtil;
 import dev.opalcompat.OpalCompat;
 import dev.opalcompat.pack.ShaderPacks;
+import dev.opalcompat.render.BlinkProbe;
 import dev.opalcompat.render.PackRenderer;
 import dev.opalcompat.screen.ShaderPackScreen;
 import net.minecraft.client.GraphicsStatus;
@@ -91,6 +92,10 @@ public final class AutoTest {
 	private long fpsEnd;
 	private final List<Long> fpsFrames = new ArrayList<>();
 	private long lastFrame;
+	private net.minecraft.client.KeyMapping held;
+	private net.minecraft.client.KeyMapping lastHeld;
+	private float turnPerTick;
+	private double driftPerTick;
 
 	private AutoTest() {
 		if (!ENABLED) return;
@@ -127,7 +132,10 @@ public final class AutoTest {
 					OpalCompat.LOGGER.info("[autotest] world joined");
 				}
 			}
-			case RUNNING -> advance(mc);
+			case RUNNING -> {
+				moveCamera(mc);
+				advance(mc);
+			}
 			case DONE -> mc.stop();
 		}
 	}
@@ -248,10 +256,47 @@ public final class AutoTest {
 				TextureUtil.releaseTextureId(id);
 				this.notes.add("empty upload passed");
 			}
+			// What shows for a frame or three and is gone: BlinkProbe.
+			case "probe" -> {
+				if (rest.equals("stop")) this.notes.add(BlinkProbe.stop());
+				else BlinkProbe.start(this.out);
+			}
+			// A key held down until "hold none", and the camera turned this many degrees a tick.
+			case "hold" -> this.held = rest.equals("none") ? null : key(mc, rest);
+			case "turn" -> this.turnPerTick = Float.parseFloat(rest);
+			case "bob" -> mc.options.bobView().set(Boolean.parseBoolean(rest));
+			case "fly" -> {
+				mc.player.getAbilities().flying = Boolean.parseBoolean(rest);
+				mc.player.onUpdateAbilities();
+			}
+			// The player moved this many blocks a tick along x: slow enough that nothing on the screen moves to speak of.
+			case "drift" -> this.driftPerTick = Double.parseDouble(rest);
 			case "note" -> this.notes.add(rest);
 			case "error" -> this.notes.add("last error: " + PackRenderer.lastError().orElse("none"));
 			default -> throw new IllegalArgumentException("Unknown line");
 		}
+	}
+
+	private static net.minecraft.client.KeyMapping key(Minecraft mc, String name) {
+		return switch (name) {
+			case "forward" -> mc.options.keyUp;
+			case "back" -> mc.options.keyDown;
+			case "left" -> mc.options.keyLeft;
+			case "right" -> mc.options.keyRight;
+			case "up" -> mc.options.keyJump;
+			default -> throw new IllegalArgumentException("No key " + name);
+		};
+	}
+
+	private void moveCamera(Minecraft mc) {
+		if (mc.player == null) return;
+		// Someone at the window would move the camera; the script is what is measured.
+		if (mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
+		if (this.lastHeld != null && this.lastHeld != this.held) this.lastHeld.setDown(false);
+		if (this.held != null) this.held.setDown(true);
+		this.lastHeld = this.held;
+		if (this.turnPerTick != 0.0F) mc.player.setYRot(mc.player.getYRot() + this.turnPerTick);
+		if (this.driftPerTick != 0.0) mc.player.setPos(mc.player.getX() + this.driftPerTick, mc.player.getY(), mc.player.getZ());
 	}
 
 	/** Another mod's screen, by the name of its class. */

@@ -527,6 +527,18 @@ public final class ViewMatrices implements ViewSource {
 			this.anchorShadowCamera.set(camera);
 			this.shadowSeeded = true;
 		}
+
+		// OpalCompat: Vitrail fills the map at the end of a frame and samples it through the next, which is what the
+		// anchor above is for. Here the map is filled at the head of the frame that samples it, Iris's order, so a frame
+		// that fills it has to read it through the pair it is drawn with. The anchored pair is the last frame's grid: the
+		// two part by a whole grid cell on the one frame the camera crosses into another, and every shadow on the screen
+		// jumped by that for one frame, every two blocks of walking.
+		if (ShadowAmortisation.drawTerrainThisFrame()) {
+			this.mapShadowModelView.set(this.shadowModelView);
+			this.mapShadowModelViewInverse.set(this.shadowModelViewInverse);
+			this.mapShadowProjection.set(this.shadowProjection);
+			this.mapShadowProjectionInverse.set(this.shadowProjectionInverse);
+		}
 	}
 
 	/** Which depth convention the target this pass draws into carries. */

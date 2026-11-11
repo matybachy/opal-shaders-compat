@@ -78,7 +78,7 @@ final class TargetDump implements AutoCloseable {
 	/** Once the commands have run: waits for the device, and writes everything out. Row 0 of a target is the bottom. */
 	@Override
 	public void close() {
-		vkDeviceWaitIdle(Vk.device());
+		dev.opalcompat.vk.QueueLock.deviceWaitIdle();
 		for (Pending dump : this.pending) {
 			ByteBuffer bytes = dump.pixels().view(0, dump.width() * dump.height() * 4).order(ByteOrder.LITTLE_ENDIAN);
 			try (NativeImage png = new NativeImage(dump.width(), dump.height(), false)) {

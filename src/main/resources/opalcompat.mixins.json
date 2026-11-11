@@ -33,8 +33,25 @@
     "DrawParametersAccessor",
     "BiomesMixin",
     "DeviceManagerMixin",
+    "VulkanIdleMixin",
+    "SpriteContentsUseMixin",
+    "SpriteInterpolationUseMixin",
+    "TextureAtlasSpriteUseMixin",
+    "BakedQuadUseMixin",
+    "TextureAtlasCycleMixin",
+    "ModelBakeryUseMixin",
+    "BlockRendererUseMixin",
+    "BuildTaskUrgencyMixin",
+    "SectionGraphUrgencyMixin",
+    "TaskDispatcherFlowMixin",
+    "ChunkUploadCountMixin",
     "DhDependencySetupMixin",
-    "DhMainMixin"
+    "DhMainMixin",
+    "DhRenderTasksMixin",
+    "DhRenderListMixin",
+    "DhClientWorldMixin",
+    "DhStartMixin",
+    "DhClientApiMixin"
   ],
   "injectors": {
     "defaultRequire": 1

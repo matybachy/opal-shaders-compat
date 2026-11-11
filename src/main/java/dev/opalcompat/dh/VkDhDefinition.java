@@ -35,8 +35,10 @@ import java.util.Map;
 
 /**
  * The one renderer of DH's that does anything here is the terrain. Its passes of colour (fog, ambient occlusion,
- * the fades, anti-aliasing) are a pack's own business once a pack draws the terrain, and the rest of what DH draws,
- * its clouds and beacons, stays undrawn: a pack's {@code dh_generic} has no road here yet.
+ * the fades, anti-aliasing) are a pack's own business once a pack draws the terrain; with no pack the terrain's program
+ * works out the fog and the far fade itself, and ambient occlusion, anti-aliasing and the fade of the near chunks stay
+ * undone. The rest of what DH draws, its clouds and beacons, stays undrawn: a pack's {@code dh_generic} has no road
+ * here yet.
  * <p>
  * Depth runs forward in the volume GL would use, which is what DH's own frustum culling reads its matrix as. The
  * renderer builds its 0..1 row from the planes of that matrix.
@@ -62,10 +64,10 @@ final class VkDhDefinition extends AbstractDhRenderApiDefinition {
 	@Override public String getEngineName() { return "OpalCompat"; }
 	@Override public EDhApiDepthDirection getDepthDirection() { return EDhApiDepthDirection.FORWARD_Z; }
 	@Override public EDhApiDepthRange getDepthRange() { return EDhApiDepthRange.NEG_ONE_TO_POS_ONE; }
-	// Nothing runs on GL in this definition. The one thing asking, for the name of the bound framebuffer, is
-	// answered by VulkanMod's emulation; the other values in the enum are Blaze3D's roads, which 1.21.1 has not got.
-	@Override public EDhApiRenderingApi getRenderApi() { return EDhApiRenderingApi.OPEN_GL; }
-	@Override public EDhApiRenderingEngine getRenderingEngine() { return EDhApiRenderingEngine.OPEN_GL; }
+	// Nothing runs on GL in this definition. In DH only its public API reads these, for mods that ask it what is drawing.
+	// DH's GL proxy would object to VULKAN, but nothing here ever creates one.
+	@Override public EDhApiRenderingApi getRenderApi() { return EDhApiRenderingApi.VULKAN; }
+	@Override public EDhApiRenderingEngine getRenderingEngine() { return EDhApiRenderingEngine.BLAZE_3D; }
 	@Override public boolean isNativeRenderer() { return false; }
 
 	@Override public IDhMetaRenderer getMetaRenderer() { return META; }
@@ -97,10 +99,14 @@ final class VkDhDefinition extends AbstractDhRenderApiDefinition {
 		float[] corners = new float[count * 3];
 		LodBuffer[][] sections = new LodBuffer[count][];
 		int kept = 0;
+		int notUploaded = 0;
 		var camera = params.exactCameraPosition;
 		for (int i = 0; i < count; i++) {
 			LodBufferContainer container = containers.get(i);
-			if (!container.buffersUploaded) continue;
+			// DH's quad tree closes a section from its own thread, and that only sets this flag: the buffers stay
+			// until its close task runs on this thread, ahead of the next list. Skipping it here left a hole for a
+			// frame, its replacement not being in this list yet. A container reaches the list only once uploaded.
+			if (!container.buffersUploaded) notUploaded++;
 			IVertexBufferWrapper[] wrappers = opaque ? container.vboOpaqueWrappers : container.vboTransparentWrappers;
 			if (wrappers.length == 0) continue;
 			LodBuffer[] buffers = new LodBuffer[wrappers.length];
@@ -109,8 +115,10 @@ final class VkDhDefinition extends AbstractDhRenderApiDefinition {
 			corners[kept * 3 + 1] = (float) (container.minCornerBlockPos.getY() - camera.y);
 			corners[kept * 3 + 2] = (float) (container.minCornerBlockPos.getZ() - camera.z);
 			sections[kept++] = buffers;
+			if (opaque && !light) dev.opalcompat.render.BlinkProbe.farSection(container.pos);
 		}
-		VkDhBridge.draw(opaque, light, near, far, corners, sections, kept);
+		boolean drawn = VkDhBridge.draw(params, opaque, light, near, far, corners, sections, kept);
+		if (opaque && !light) LodWatch.drew(kept, notUploaded, drawn);
 	}
 
 	private static final class Vbo extends LodBuffer implements IVertexBufferWrapper {

@@ -1,5 +1,7 @@
 package dev.opalcompat.mixin;
 
+import dev.opalcompat.dh.DhSupport;
+import dev.opalcompat.dh.VkDhBridge;
 import dev.opalcompat.render.PackRenderer;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.chunk.WorldRenderer;
@@ -16,6 +18,7 @@ public abstract class WorldRendererMixin {
 	@Inject(method = "renderSectionLayer", at = @At("HEAD"), cancellable = true)
 	private void opalcompat$terrain(RenderType renderType, double camX, double camY, double camZ, Matrix4f modelView,
 			Matrix4f projection, CallbackInfo ci) {
+		if (DhSupport.ACTIVE) VkDhBridge.beforeWorldLayer(renderType, modelView, projection);
 		if (PackRenderer.drawTerrain(renderType, camX, camY, camZ)) {
 			ci.cancel();
 		}

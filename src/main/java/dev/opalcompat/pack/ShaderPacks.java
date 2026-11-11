@@ -43,6 +43,10 @@ public final class ShaderPacks {
 	/** Asked for every frame; the file is read once. */
 	private static String selected;
 	private static String missingNamed;
+	private static final long LOOK_EVERY_NANOS = 1_000_000_000L;
+	private static String lookedFor;
+	private static long lookedAt;
+	private static Optional<Path> found = Optional.empty();
 
 	private ShaderPacks() {
 	}
@@ -87,6 +91,18 @@ public final class ShaderPacks {
 		selected = name;
 	}
 
+	/** A switch of this mod's own in the same file. */
+	public static boolean flag(String key, boolean fallback) {
+		String value = config().getProperty(key);
+		return value == null ? fallback : Boolean.parseBoolean(value.trim());
+	}
+
+	public static void setFlag(String key, boolean value) throws IOException {
+		Properties properties = config();
+		properties.setProperty(key, Boolean.toString(value));
+		store(properties);
+	}
+
 	/** The pack that was on last, for when shaders go back on. */
 	public static String lastName() {
 		return config().getProperty(LAST_KEY, "").trim();
@@ -122,13 +138,21 @@ public final class ShaderPacks {
 	public static Optional<Path> selectedPath() {
 		String name = selectedName();
 		if (name.isEmpty()) return Optional.empty();
-		Path path = directory().resolve(name);
-		if (!Files.exists(path)) {
-			if (!name.equals(missingNamed)) OpalCompat.LOGGER.warn("Selected shader pack {} is not in {}", name, directory());
-			missingNamed = name;
-			return Optional.empty();
+		// Asked at the head of every frame: the disk is, once a second.
+		long now = System.nanoTime();
+		if (!name.equals(lookedFor) || now - lookedAt > LOOK_EVERY_NANOS) {
+			lookedFor = name;
+			lookedAt = now;
+			Path path = directory().resolve(name);
+			if (Files.exists(path)) {
+				found = Optional.of(path);
+			} else {
+				if (!name.equals(missingNamed)) OpalCompat.LOGGER.warn("Selected shader pack {} is not in {}", name, directory());
+				missingNamed = name;
+				found = Optional.empty();
+			}
 		}
-		return Optional.of(path);
+		return found;
 	}
 
 	/** Reads one pack and writes Vitrail's report plus the full program and option lists. */

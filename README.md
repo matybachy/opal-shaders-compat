@@ -12,9 +12,12 @@ Client-side only. **Alpha:** tested on one GPU (RTX 5060 Ti) and a handful of sh
 - Switches packs in the game without a restart. If a pack fails, the game falls back to plain VulkanMod Reforged and shows the error on the Shader Packs screen.
 - Puts the settings on one screen: VulkanMod Reforged's video settings get a **Shaders** group and pages for Vectors.
 - Keeps Opal's screens and keys working. Opal's own OpenGL renderer stands down, and the packs it asks for are drawn here.
-- Draws Distant Horizons 3.3.3 LODs through a pack's `dh_*` programs.
+- Has pack screens of its own behind the Shaders group: a list of packs that filters by name, and a pack's settings with a search over all of its pages.
+- Uploads finished chunk sections as fast as VulkanMod Reforged's own frame budget allows while they wait, whatever its "Chunk Upload Ceiling" says, and builds and uploads the sections near the player and those they change first.
+- Animates a texture only once something has drawn with it, which spares a large mod set hundreds of uploads twenty times a second. A switch in the Shaders group turns it off.
+- Draws Distant Horizons 3.3.3 LODs through a pack's `dh_*` programs, and with no pack on through DH's own terrain program on Vulkan, with its fog and far fade.
 - Draws Create and Mekanism with the pack. Flywheel falls back to `flywheel:off`, so Create's moving parts go through block entity renderers.
-- Works around crashes in other mods: Steam 'n' Rails uploading textures on VulkanMod Reforged during the load, a random failure in Every Compat at startup, and Distant Horizons with Chunky when a world loads.
+- Works around crashes in other mods: Steam 'n' Rails uploading textures on VulkanMod Reforged during the load, a random failure in Every Compat at startup, and Distant Horizons with Chunky when a world loads. Distant Horizons also loads its far terrain faster than its own limits would allow here: its threads copy it to the GPU themselves instead of waiting for a frame.
 
 **Without VulkanMod Reforged** (Opal on OpenGL)
 
@@ -42,7 +45,7 @@ Optional:
 
 ## Installation
 
-There are no prebuilt releases yet, so [build the jar](#building) first.
+Download the jar from [Releases](https://github.com/matybachy/opal-shaders-compat/releases), or [build it](#building).
 
 1. Put `opalcompat-<version>.jar` and VulkanMod Reforged in `mods`, with any of the optional mods. Remove old `vitrailvk` and `vitrailbridge` jars, the game refuses them.
 2. Put shader packs in `shaderpacks`. At least one should be there when the game starts, otherwise turning a pack on needs a restart. With a pack installed, terrain takes twice the memory, even with shaders turned off.
@@ -68,10 +71,11 @@ On Vulkan with NeoForge 21.1.265. The full list and the evidence are in [PORTING
 | Distant Horizons 3.3.3: LODs by day and night | works |
 | A 356-mod set with FerriteCore, G1 and 15 GB, without a shader pack | starts, creates a world and joins it |
 | A 184-mod set with Complementary Unbound + Euphoria Patches and DH, over deep water: near and far water meet | no wall or gap at the edge of the render distance |
+| The same set, moving at render distance 5, measured frame by frame (`scripts/scenes/blink.txt`): standing, drifting, flying and turning | no shadow jumps, no chunks or far sections missing; water and light hold still while walking |
 
 ## Known limitations
 
-- Without a shader pack, Distant Horizons LODs are not drawn, nor are its clouds and beacons.
+- Distant Horizons' clouds and beacons are not drawn. Without a shader pack its LODs have no ambient occlusion or anti-aliasing and no fade from the near chunks, and that route has been built but not yet run.
 - Normal and specular maps are neutral: PBR atlases are not loaded.
 - Packed, BGR, integer and rectangle raw textures read as black.
 - Only sections compiled by the camera's graph go into the shadow map.
@@ -80,6 +84,10 @@ On Vulkan with NeoForge 21.1.265. The full list and the evidence are in [PORTING
 - The first time a pack or its settings are used, the game stops for up to a second whenever a new program is needed, for example at the first mob. The result is kept in `config/opalcompat_pipeline_cache.bin`, so later runs do not stop.
 
 More in [PORTING.md](PORTING.md#known-problems-and-limitations).
+
+## Reporting low frame rates
+
+While a shader pack draws a world, `logs/latest.log` says every ten seconds how the frames went (`[pack] ... frames in 10 s`) and every thirty seconds where the render thread spent them (`[where]`): which part of the frame, which mods, which methods, for all frames and apart for the slow ones. Send that log with a report. The sampling costs a fraction of a percent; `frameSampler=false` in `config/opalcompat.properties` turns it off.
 
 ## Building
 
@@ -92,6 +100,8 @@ Needs JDK 21.
 The jar is `build/libs/opalcompat-<version>.jar`. The first build downloads VulkanMod Reforged and Distant Horizons to compile against and checks their SHA-256. Neither is put in the jar. Opal and Vectors are not needed: `src/stubs` only names what this mod calls, and is left out of the jar too.
 
 `./gradlew checkPacks` translates and compiles every program of the packs in `run/shaderpacks` without starting the game. `scripts/instance.py` sets up and runs clean test instances, driven by the scenes in `scripts/scenes`.
+
+`./gradlew patchDistantHorizons` writes a modified copy of Distant Horizons 3.3.3 to `build/libs/distanthorizons`, under the same file name, that selects Blaze3D in its code instead of its config and calls no OpenGL of its own. It only works with this mod on VulkanMod Reforged. The unmodified jar works as well; see [PORTING.md](PORTING.md).
 
 ## Documentation
 

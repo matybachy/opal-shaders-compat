@@ -1,5 +1,6 @@
 package dev.opalcompat.mixin;
 
+import dev.opalcompat.render.LevelCapture;
 import dev.opalcompat.render.PackRenderer;
 import dev.opalcompat.render.Families;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
@@ -28,6 +29,15 @@ public abstract class GameRendererMixin {
 			shift = At.Shift.AFTER))
 	private void opalcompat$afterLevel(DeltaTracker deltaTracker, boolean renderLevel, CallbackInfo ci) {
 		PackRenderer.afterLevel();
+	}
+
+	/** The first of the two in {@code renderLevel}, which the bob and the nausea are then multiplied onto. */
+	@WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", ordinal = 0,
+			target = "Lnet/minecraft/client/renderer/GameRenderer;getProjectionMatrix(D)Lorg/joml/Matrix4f;"))
+	private Matrix4f opalcompat$cleanProjection(GameRenderer game, double fov, Operation<Matrix4f> original) {
+		Matrix4f projection = original.call(game, fov);
+		LevelCapture.clean(projection);
+		return projection;
 	}
 
 	@WrapMethod(method = "renderItemInHand")

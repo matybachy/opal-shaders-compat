@@ -10,6 +10,10 @@ be supplied: according to Modrinth `sodiumdynamiclights` requires Sodium, Sodium
 next to it. The addon also builds on the LambDynLights API, so it would do nothing without that anyway. **Remove it from the
 instance.** Posing as `sodiumdynamiclights` is out of the question, for the same reason as the id `iris`.
 
+## `createbetterfps` does not load
+
+The game stops with `Mod createbetterfps requires sodium 0.6.9 or above`, and Sodium will not run with VMR. **Remove it from the instance.**
+
 ## A large mod set without FerriteCore does not fit in 15 GB
 
 The set this was measured on has 3.3 million `BlockState`s (Every Compat adds 55,836 blocks). Without FerriteCore 8.9 GB is live
@@ -29,7 +33,10 @@ The right fix belongs with them. Once they make it, the mixin is unnecessary but
 - **VMR:** `VTextureSelector.uploadSubTexture` throws an NPE on an upload to a texture with no image, `GlTexture.texSubImage2D` skips it. `VTextureSelectorMixin`.
 - **Every Compat 2.11.56:** `forAllModules` walks the modules without the lock `addModule` holds. `EveryCompatModulesMixin`.
 - **Distant Horizons 3.3.3 with Chunky 1.4.23:** `ChunkyAccessor` calls `ChunkyProvider.get()` before Chunky exists. `DhChunkyMixin`.
-- **VMR with Distant Horizons:** both draw from the head of `LevelRenderer.renderSectionLayer` and VMR comes first, so DH's deferred water lands after the world's. `DhSupport.waterBeforeWorld`.
+- **VMR with Distant Horizons:** both draw from the head of `LevelRenderer.renderSectionLayer` and VMR comes first, so DH's deferred water lands after the world's, and with no pack its whole far terrain would land on top of the near chunks. `DhSupport.waterBeforeWorld`, `VkDhBridge.beforeWorldLayer`.
+- **Distant Horizons 3.3.3 at its start:** `logIncompatibilityWarnings` takes any `IIrisAccessor` for Iris, crashes the game on the `BLAZE_3D` engine and forces `OPEN_GL` on `AUTO`. `DhStartMixin`, for this mod's adapter alone.
+- **Distant Horizons 3.3.3:** `RenderThreadTaskHandler` allows its tasks half a frame at the frame limit, 1.5 ms at an unlimited 260, while its loader threads wait for them holding the one pool of threads DH has. Every section's upload waits for the next frame, so far terrain arrives at the speed of the frame rate. `DhRenderTasksMixin`, `LodUploads`, `LodTransfer`.
+- **Distant Horizons 3.3.3 on a server:** the level key arrives just after the join and two threads unload the same level; the second throws `Cannot invoke "DhClientLevel.close()"` in `DhClientWorld.unloadLevel`. `DhClientWorldMixin`.
 
 ## Fabulous graphics on VMR
 

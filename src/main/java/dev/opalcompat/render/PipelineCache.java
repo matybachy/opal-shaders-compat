@@ -47,7 +47,7 @@ final class PipelineCache {
 		return FMLPaths.CONFIGDIR.get().resolve("opalcompat_pipeline_cache.bin");
 	}
 
-	static long handle() {
+	static synchronized long handle() {
 		if (!opened) {
 			opened = true;
 			handle = open();
@@ -56,7 +56,7 @@ final class PipelineCache {
 	}
 
 	/** A pipeline was built: the cache has something the file has not. */
-	static void created(long startedNanos) {
+	static synchronized void created(long startedNanos) {
 		unsaved = true;
 		lastCreated = System.nanoTime();
 		built++;
@@ -64,7 +64,7 @@ final class PipelineCache {
 	}
 
 	/** Once a frame. The writing itself is off the render thread. */
-	static void saveWhenQuiet() {
+	static synchronized void saveWhenQuiet() {
 		if (!unsaved || handle == VK_NULL_HANDLE || System.nanoTime() - lastCreated < QUIET_NANOS) return;
 		unsaved = false;
 		OpalCompat.LOGGER.info("[pack] {} pipelines built in {} ms", built, buildNanos / 1_000_000L);

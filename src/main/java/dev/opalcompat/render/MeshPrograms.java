@@ -19,11 +19,24 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The pack's programs for mesh draws, translated and compiled the first time a family asks for one. A
  * program that cannot be served is logged once and its family handed back to VulkanMod; it does not
  * take the rest of the pack with it.
+ * <p>
+ * OpalCompat: all of that, and the pipelines of these programs, happens on a thread of their own. A program of a large
+ * pack takes a few hundred milliseconds to translate and compile, and the driver up to a second more for a pipeline it
+ * has not seen; on the render thread each was a frame that long, the first time a mob, a chest or a particle came into
+ * view. Until a program is there, what asks for it is left out of the picture. That thread is the only one reading the
+ * pack once it is loaded: {@code ShaderPackSource} keeps memos that belong to one thread.
  */
 final class MeshPrograms implements AutoCloseable {
 	private record Key(Families.Piece piece, boolean afterDeferred) {
@@ -43,7 +56,15 @@ final class MeshPrograms implements AutoCloseable {
 	private final PackProgram.Chain chain;
 	private final PackValues values;
 	private final SpirvCompiler compiler;
+	private final ExecutorService worker = Executors.newSingleThreadExecutor(task -> {
+		Thread thread = new Thread(task, "OpalCompat shaders");
+		thread.setDaemon(true);
+		return thread;
+	});
+	/** Render thread only. */
 	private final Map<Key, Optional<Program>> programs = new HashMap<>();
+	private final Map<Key, Future<Optional<Program>>> preparing = new HashMap<>();
+	/** {@link #worker} only, until {@link #close}. */
 	private final Map<Families.Piece, Optional<PackProgram.Loaded>> loaded = new HashMap<>();
 	private final Map<ProgramTranslator.TranslatedProgram, Compiled> compiled = new IdentityHashMap<>();
 
@@ -54,10 +75,41 @@ final class MeshPrograms implements AutoCloseable {
 		this.compiler = compiler;
 	}
 
+	/**
+	 * On the render thread.
+	 *
+	 * @return the program, empty where the pack does not serve this family, or null while it is being prepared
+	 */
 	Optional<Program> resolve(Families.Piece piece, boolean afterDeferred) {
-		return this.programs.computeIfAbsent(new Key(piece, afterDeferred), this::load);
+		Key key = new Key(piece, afterDeferred);
+		Optional<Program> ready = this.programs.get(key);
+		if (ready != null) return ready;
+		Future<Optional<Program>> future = this.preparing.get(key);
+		if (future == null) {
+			try {
+				this.preparing.put(key, this.worker.submit(() -> load(key)));
+			} catch (RejectedExecutionException e) {
+				// Being closed.
+			}
+			return null;
+		}
+		if (!future.isDone()) return null;
+		this.preparing.remove(key);
+		Optional<Program> result;
+		try {
+			result = future.get();
+		} catch (ExecutionException | CancellationException e) {
+			OpalCompat.LOGGER.error("[pack] {} could not be loaded; VulkanMod draws it", piece.program(), e);
+			result = Optional.empty();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return null;
+		}
+		this.programs.put(key, result);
+		return result;
 	}
 
+	/** On {@link #worker}. */
 	private Optional<Program> load(Key key) {
 		Families.Piece piece = key.piece();
 		String name = piece.program() + "|" + piece.inputs();
@@ -76,7 +128,8 @@ final class MeshPrograms implements AutoCloseable {
 			PackProgram.Loaded bound = translated.get().rebind(this.chain.targets(), step);
 			Compiled compiled = this.compiled.get(bound.program());
 			if (compiled == null) {
-				PackPipeline pipeline = new PackPipeline("mesh:" + path, bound.program(), this.compiler, PackPipeline.Kind.MESH);
+				PackPipeline pipeline = new PackPipeline("mesh:" + path, bound.program(), this.compiler, PackPipeline.Kind.MESH,
+						this.worker);
 				UniformBlock uniforms = PackRenderer.block("mesh:" + path, bound,
 						shadow ? this.values.shadowGeometryCatalog() : this.values.geometryCatalog());
 				compiled = new Compiled(pipeline, uniforms);
@@ -136,11 +189,23 @@ final class MeshPrograms implements AutoCloseable {
 		return new ChainPlan.Pass(served, attachments, size, false);
 	}
 
+	/** Before the pack is: the worker finishes what it is doing and nothing after that. */
 	@Override
 	public void close() {
+		this.worker.shutdownNow();
+		try {
+			if (!this.worker.awaitTermination(30, TimeUnit.SECONDS)) {
+				OpalCompat.LOGGER.warn("[pack] the shader thread is still busy; its programs are left behind");
+				return;
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return;
+		}
 		this.compiled.values().forEach(compiled -> compiled.pipeline().close());
 		this.compiled.clear();
 		this.programs.clear();
+		this.preparing.clear();
 		this.loaded.clear();
 	}
 }

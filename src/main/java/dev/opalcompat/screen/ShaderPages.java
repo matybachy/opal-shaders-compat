@@ -4,6 +4,7 @@ import dev.vitrail.pack.load.PackLoader;
 import dev.opalcompat.OpalCompat;
 import dev.opalcompat.pack.ShaderPacks;
 import dev.opalcompat.render.PackRenderer;
+import dev.opalcompat.texture.AnimatedSprites;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -36,6 +37,7 @@ public final class ShaderPages {
 
 	private static SwitchOption enabled;
 	private static CyclingOption<String> pack;
+	private static SwitchOption usedTextures;
 	private static Function<Screen, Screen> listScreen = ShaderPackScreen::new;
 	private static BiFunction<Screen, String, Screen> settingsScreen;
 
@@ -74,17 +76,21 @@ public final class ShaderPages {
 				() -> Minecraft.getInstance().setScreen(listScreen.apply(Minecraft.getInstance().screen)));
 		Option<?> folder = new ActionOption(Component.translatable("opalcompat.screen.folder"), () -> Component.translatable("opalcompat.page.open"),
 				ShaderPages::openFolder);
+		usedTextures = new SwitchOption(Component.translatable("opalcompat.page.textures"), value -> {}, AnimatedSprites::enabled);
+		usedTextures.setTooltip(Component.translatable("opalcompat.page.textures.tip"));
 		Option<?> status = new ActionOption(Component.translatable("opalcompat.page.status"), ShaderPages::status, null);
 		status.setTooltip(value -> statusInFull());
 
 		return List.of(new OptionPage(Component.translatable("opalcompat.page.packs").getString(), new OptionBlock[] {
 				new OptionBlock("", new Option<?>[] {enabled, pack}),
 				new OptionBlock("", new Option<?>[] {settings, list, folder}),
+				new OptionBlock("", new Option<?>[] {usedTextures}),
 				new OptionBlock("", new Option<?>[] {status}),
 		}));
 	}
 
 	private static void apply() {
+		if (usedTextures != null && usedTextures.getAppliedValue() != AnimatedSprites.enabled()) AnimatedSprites.enable(usedTextures.getAppliedValue());
 		String chosen = enabled.getAppliedValue() ? pack.getAppliedValue() : NONE;
 		if (chosen.equals(ShaderPacks.selectedName())) return;
 		try {

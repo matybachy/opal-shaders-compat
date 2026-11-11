@@ -277,10 +277,10 @@ public final class FrameState implements WorldState {
 
 	private void advanceView(Minecraft minecraft) {
 		int renderDistance = minecraft.options.getEffectiveRenderDistance();
-		// OpalCompat: 1.21.1 folds the bob into the projection the level is drawn with, as Iris 1.21.1
-		// publishes it, so no bob is split out. ViewMatrices expects a reversed Z projection.
-		LevelCapture.glToReversed(LevelCapture.projection(), this.reversedProjection);
-		this.view.advance(LevelCapture.modelView(), IDENTITY, this.reversedProjection,
+		// OpalCompat: the game's projection with the bob taken out, and the bob on the model view, as
+		// Iris has it too (MixinModelViewBobbing). ViewMatrices expects a reversed Z projection.
+		LevelCapture.glToReversed(LevelCapture.cleanProjection(), this.reversedProjection);
+		this.view.advance(LevelCapture.modelView(), LevelCapture.bob(), this.reversedProjection,
 				renderDistance * 16.0F, renderDistance);
 		// OpalCompat: the row of the volume Distant Horizons is drawn in, in this reversed spelling.
 		float[] distant = dev.opalcompat.dh.DhSupport.planes();

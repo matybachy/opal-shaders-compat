@@ -168,8 +168,9 @@ public final class PackRenderer implements AutoCloseable {
 	private static final java.util.Deque<Families.Phase> phases = new java.util.ArrayDeque<>();
 	private static final java.util.Deque<DrawIds> drawIds = new java.util.ArrayDeque<>();
 	private static long frameSerial;
+	private static boolean resizeHooked;
 	private static SpirvCompiler compiler;
-	private static final Set<List<String>> UNANSWERED_SAID = new HashSet<>();
+	private static final Set<List<String>> UNANSWERED_SAID = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
 	private final String packName;
 	private final OpenedPack opened;
@@ -233,6 +234,13 @@ public final class PackRenderer implements AutoCloseable {
 	private PackRenderer(Path packPath, String dimension) throws Exception {
 		long start = System.nanoTime();
 		UNANSWERED_SAID.clear();
+		if (!resizeHooked) {
+			resizeHooked = true;
+			// The swap chain's image views die with it, whatever its size: no framebuffer over one may be met again.
+			Renderer.getInstance().addOnResizeCallback(() -> {
+				if (active != null) active.renderPasses.forgetFramebuffers();
+			});
+		}
 		boolean terrainMesh = TerrainFormat.EXTENDED;
 		Machine.install();
 		this.opened = OpenedPack.open(packPath, ShaderPacks.options(), ShaderPacks.profile());
@@ -601,6 +609,7 @@ public final class PackRenderer implements AutoCloseable {
 	public static void afterLevel() {
 		drawingLevel = false;
 		if (drawing()) {
+			FrameStats.level();
 			try {
 				active.finishFrame();
 			} catch (RuntimeException e) {
@@ -673,10 +682,16 @@ public final class PackRenderer implements AutoCloseable {
 	/** Called after VulkanMod finishes or discards the recorded frame. */
 	public static void frameEnded() {
 		frameSerial++;
+		FrameStats.frame();
 		if (failedDuringFrame) {
 			shutDown();
 			failedDuringFrame = false;
 		}
+	}
+
+	/** Which frame VulkanMod is recording: a frame slot's memory can be reused once per value. */
+	static long frameSerial() {
+		return frameSerial;
 	}
 
 	private static void ensureLoaded() {
@@ -712,7 +727,7 @@ public final class PackRenderer implements AutoCloseable {
 
 	private static void shutDown() {
 		if (active != null) {
-			vkDeviceWaitIdle(Vk.device());
+			dev.opalcompat.vk.QueueLock.deviceWaitIdle();
 			active.close();
 		}
 		active = null;
@@ -729,7 +744,7 @@ public final class PackRenderer implements AutoCloseable {
 	// ----------------------------------------------------------------------------------------------
 	// Frame
 
-	private static VulkanImage screen() {
+	static VulkanImage screen() {
 		return Renderer.getInstance().getMainPass().getColorAttachment();
 	}
 
@@ -744,7 +759,7 @@ public final class PackRenderer implements AutoCloseable {
 		this.nextAlone = 0;
 		VulkanImage screen = screen();
 		if (this.targets == null || !this.targets.matches(screen.width, screen.height)) {
-			vkDeviceWaitIdle(Vk.device());
+			dev.opalcompat.vk.QueueLock.deviceWaitIdle();
 			this.renderPasses.forgetFramebuffers();
 			freeTargets();
 			this.targets = new PackTargets(this.chain.targets(), screen.width, screen.height);
@@ -766,6 +781,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (this.slotSerial != frameSerial) {
 			this.slotSerial = frameSerial;
 			int frame = Renderer.getCurrentFrame();
+			BlinkProbe.slotFree(frame);
 			this.meshArena.begin(frame);
 			this.ubo.begin(frame);
 			this.framePools = this.descriptorPools.computeIfAbsent(frame, f -> new ArrayList<>());
@@ -932,8 +948,8 @@ public final class PackRenderer implements AutoCloseable {
 				outputs.add(target.image(attachment.side()));
 			}
 
-			this.values.modelView(LevelCapture.modelView(), IDENTITY);
-			this.values.projection(LevelCapture.projection());
+			this.values.modelView(LevelCapture.modelView(), LevelCapture.bob());
+			this.values.projection(LevelCapture.cleanProjection());
 			this.values.passAlphaTest(pass == TerrainPass.CUTOUT ? 0.1F : 0.0F);
 			this.values.passColour(WHITE);
 			this.values.renderStage(switch (type) {
@@ -1034,6 +1050,11 @@ public final class PackRenderer implements AutoCloseable {
 		Families.Piece piece = Families.resolve(name, format, phase, blend.enabled);
 		if (piece == null) return light ? DROPPED : null;
 		Optional<MeshPrograms.Program> candidate = this.meshPrograms.resolve(piece, this.deferredDone);
+		// Still being translated and compiled on the shader thread: left out of the picture until it is there.
+		if (candidate == null) {
+			FrameStats.waiting();
+			return DROPPED;
+		}
 		if (candidate.isEmpty()) return light ? DROPPED : null;
 		MeshPrograms.Program program = candidate.get();
 
@@ -1148,6 +1169,16 @@ public final class PackRenderer implements AutoCloseable {
 		List<VulkanImage> outputs = planned.outputs();
 		GameImages images = new GameImages(glImage(RenderSystem.getShaderTexture(0)), glImage(RenderSystem.getShaderTexture(2)),
 				glImage(RenderSystem.getShaderTexture(1)));
+		// The driver builds a pipeline it has not seen on the shader thread; this draw is left out until it has.
+		List<Integer> formats = outputs.stream().map(image -> image.format).toList();
+		long handle = pipeline.readyPipeline(this.renderPasses.renderPass(formats, program.shadow() ? this.shadow.depthFormat() : DEPTH_FORMAT, true),
+				outputs.size(), planned.style(), planned.format(), draw.derived());
+		if (handle == 0L) {
+			FrameStats.waiting();
+			return;
+		}
+		FrameStats.mesh();
+		long meshStarted = System.nanoTime();
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
@@ -1155,14 +1186,14 @@ public final class PackRenderer implements AutoCloseable {
 			long set = allocateSet(stack, pipeline.setLayout());
 			writeDescriptors(stack, set, pipeline, program.loaded(), program.uniforms(), outputs,
 					program.shadow() ? this.shadow.depth() : this.depth, images, planned.key());
-			long renderPass = program.shadow() ? beginShadowPass(cmd, stack, outputs) : beginGeometryPass(cmd, stack, outputs);
-			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-					pipeline.pipeline(renderPass, outputs.size(), planned.style(), planned.format(), draw.derived()));
+			if (program.shadow()) beginShadowPass(cmd, stack, outputs); else beginGeometryPass(cmd, stack, outputs);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0, stack.longs(set), null);
 			if (planned.style().depthBias()) vkCmdSetDepthBias(cmd, planned.biasUnits(), 0.0F, planned.biasFactor());
 			draw.draw(cmd, stack);
 			vkCmdEndRenderPass(cmd);
 		}
+		FrameStats.meshTime(System.nanoTime() - meshStarted);
 	}
 
 	/**
@@ -1199,7 +1230,7 @@ public final class PackRenderer implements AutoCloseable {
 				PackPipeline.factor(mode.srcAlpha()), PackPipeline.factor(mode.dstAlpha()));
 	}
 
-	private static VulkanImage glImage(int glId) {
+	static VulkanImage glImage(int glId) {
 		GlTexture texture = GlTexture.getTexture(glId);
 		return texture == null ? null : texture.getVulkanImage();
 	}
@@ -1218,6 +1249,7 @@ public final class PackRenderer implements AutoCloseable {
 		}
 		WorldRenderer world = WorldRenderer.getInstance();
 		StaticQueue<ChunkArea> areas = ((WorldRendererAccessor) world).opalcompat$sectionGraph().getChunkAreaQueue().queue();
+		BlinkProbe.nearSections(areas);
 		int areaCount = areas.size();
 		for (int a = 0; a < areaCount; a++) {
 			ChunkArea area = areas.get(translucent ? areaCount - 1 - a : a);
@@ -1323,6 +1355,7 @@ public final class PackRenderer implements AutoCloseable {
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
 			renderer.endRenderPass(cmd);
+			LodBuffer.afterCopies(cmd, stack);
 			// The water reads what the deferred stage made of the world, as the world's own water does.
 			if (half == DistantPrograms.Half.WATER) deferred(cmd, stack);
 
@@ -1341,12 +1374,12 @@ public final class PackRenderer implements AutoCloseable {
 			this.values.renderStage(opaque ? RenderStage.TERRAIN_SOLID : RenderStage.TERRAIN_TRANSLUCENT);
 			if (!light) {
 				// DH's volume: the frame's matrix with its own planes, in the OpenGL form like every matrix handed in here.
-				Matrix4f projection = new Matrix4f(LevelCapture.projection());
+				Matrix4f projection = new Matrix4f(LevelCapture.cleanProjection());
 				projection.m22((far + near) / (near - far));
 				projection.m32(2.0F * far * near / (near - far));
 				projection.m02(0.0F);
 				projection.m12(0.0F);
-				this.values.modelView(LevelCapture.modelView(), IDENTITY);
+				this.values.modelView(LevelCapture.modelView(), LevelCapture.bob());
 				this.values.projection(projection);
 				this.values.passColour(WHITE);
 			}
@@ -1605,6 +1638,7 @@ public final class PackRenderer implements AutoCloseable {
 			}
 			swapBack(cmd, stack);
 			if (dumpPrefix != null) dumpTargets(cmd, stack);
+			BlinkProbe.record(cmd, stack, screen, Renderer.getCurrentFrame());
 			screen.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 		}
 		if (!this.announced) {
@@ -1707,7 +1741,7 @@ public final class PackRenderer implements AutoCloseable {
 		clearDepth(cmd, stack, this.depth);
 	}
 
-	private static void clearDepth(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image) {
+	static void clearDepth(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image) {
 		VkImageSubresourceRange.Buffer depthRange = VkImageSubresourceRange.calloc(1, stack)
 				.aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).levelCount(1).layerCount(1);
 		VkClearDepthStencilValue far = VkClearDepthStencilValue.calloc(stack).depth(1.0F);
@@ -1766,7 +1800,7 @@ public final class PackRenderer implements AutoCloseable {
 		}
 	}
 
-	private static void mipChain(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image) {
+	static void mipChain(VkCommandBuffer cmd, MemoryStack stack, VulkanImage image) {
 		mipChain(cmd, stack, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_FILTER_LINEAR);
 	}
 
@@ -1864,7 +1898,7 @@ public final class PackRenderer implements AutoCloseable {
 	}
 
 	/** The swapchain is shown row 0 first; the pack's targets keep row 0 at the bottom. */
-	private static void beginPass(VkCommandBuffer cmd, MemoryStack stack, long renderPass, long framebuffer,
+	static void beginPass(VkCommandBuffer cmd, MemoryStack stack, long renderPass, long framebuffer,
 			int width, int height, boolean toScreen) {
 		VkRenderPassBeginInfo begin = VkRenderPassBeginInfo.calloc(stack).sType$Default()
 				.renderPass(renderPass).framebuffer(framebuffer);
@@ -1959,8 +1993,11 @@ public final class PackRenderer implements AutoCloseable {
 	private FrameArena.Slice globals(UniformBlock block, DrawKey draw) {
 		if (draw == null) return writeGlobals(block);
 		return this.drawGlobals.computeIfAbsent(new GlobalsKey(block, draw), key -> {
-			this.values.modelView(draw.modelView(), IDENTITY);
-			this.values.projection(draw.projection());
+			// What is drawn under the level's own projection has the bob split out of it like the level, and only that:
+			// the hand and the light have projections of their own.
+			boolean level = draw.projection().equals(LevelCapture.projection());
+			this.values.modelView(draw.modelView(), level ? LevelCapture.bob() : IDENTITY);
+			this.values.projection(level ? LevelCapture.cleanProjection() : draw.projection());
 			this.values.passColour(new Vector4f(draw.r(), draw.g(), draw.b(), draw.a()));
 			this.values.passAlphaTest(draw.alpha());
 			this.values.renderStage(draw.stage());
@@ -2039,7 +2076,8 @@ public final class PackRenderer implements AutoCloseable {
 						VulkanImage image = target.image(side(binding));
 						if (!outputs.contains(image)) return image;
 						if (this.warned.add("feedback:" + loaded.path() + ":" + sampler)) {
-							OpalCompat.LOGGER.warn("[pack] {} reads {} from the half it writes", loaded.path(), sampler);
+							// Packs declare every colortex in a shared file, so this is mostly a name nothing reads.
+							OpalCompat.LOGGER.debug("[pack] {} reads {} from the half it writes", loaded.path(), sampler);
 						}
 					}
 				}

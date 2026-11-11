@@ -39,6 +39,11 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -181,10 +186,21 @@ final class PackPipeline implements AutoCloseable {
 	private final Map<String, Integer> vertexInputs = new HashMap<>();
 	private final long setLayout;
 	private final long layout;
-	private final Map<Key, Long> pipelines = new HashMap<>();
+	/** Read by the render thread, written by it and, for a {@link #builder}, by that thread too. */
+	private final Map<Key, Long> pipelines = new ConcurrentHashMap<>();
+	/** Render thread only: what {@link #builder} is building. */
+	private final Map<Key, Future<Long>> building = new HashMap<>();
+	/** Where pipelines are built, if not on the render thread; see {@link #readyPipeline}. */
+	private final ExecutorService builder;
 	private long computePipeline;
 
 	PackPipeline(String name, ProgramTranslator.TranslatedProgram program, SpirvCompiler compiler, Kind kind) {
+		this(name, program, compiler, kind, null);
+	}
+
+	PackPipeline(String name, ProgramTranslator.TranslatedProgram program, SpirvCompiler compiler, Kind kind,
+			ExecutorService builder) {
+		this.builder = builder;
 		this.name = name;
 		this.kind = kind;
 		this.program = program;
@@ -371,6 +387,41 @@ final class PackPipeline implements AutoCloseable {
 				key -> create(renderPass, attachments, style, format, derived));
 	}
 
+	/**
+	 * The pipeline if it is there, otherwise 0 and it is built on {@link #builder}: a driver takes up to a second over a
+	 * pipeline of a large pack it has not seen, and the frame that asked would wait for all of it. The draw asking is
+	 * left out until then. With no builder this is {@link #pipeline}.
+	 */
+	long readyPipeline(long renderPass, int attachments, Style style, VertexFormat format, boolean derived) {
+		Key key = new Key(renderPass, style, format, derived);
+		Long built = this.pipelines.get(key);
+		if (built != null) return built;
+		if (this.builder == null) return pipeline(renderPass, attachments, style, format, derived);
+		Future<Long> future = this.building.get(key);
+		if (future == null) {
+			try {
+				this.building.put(key, this.builder.submit(() -> create(renderPass, attachments, style, format, derived)));
+			} catch (java.util.concurrent.RejectedExecutionException e) {
+				// The pack is being closed.
+			}
+			return 0L;
+		}
+		if (!future.isDone()) return 0L;
+		this.building.remove(key);
+		try {
+			long handle = future.get();
+			this.pipelines.put(key, handle);
+			return handle;
+		} catch (ExecutionException e) {
+			// As if it had been built here: the pack fails the way it would have.
+			if (e.getCause() instanceof RuntimeException failure) throw failure;
+			throw new CompileException(this.name + ": " + e.getCause());
+		} catch (InterruptedException | CancellationException e) {
+			if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+			return 0L;
+		}
+	}
+
 	private long create(long renderPass, int attachments, Style style, VertexFormat format, boolean derived) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(this.modules.size(), stack);
@@ -535,8 +586,18 @@ final class PackPipeline implements AutoCloseable {
 		};
 	}
 
+	/** After {@link #builder} has stopped: what it finished is destroyed with the rest. */
 	@Override
 	public void close() {
+		for (Future<Long> future : this.building.values()) {
+			if (!future.isDone() || future.isCancelled()) continue;
+			try {
+				vkDestroyPipeline(Vk.device(), future.get(), null);
+			} catch (ExecutionException | InterruptedException e) {
+				// Never built.
+			}
+		}
+		this.building.clear();
 		this.pipelines.values().forEach(p -> vkDestroyPipeline(Vk.device(), p, null));
 		this.pipelines.clear();
 		if (this.computePipeline != 0L) vkDestroyPipeline(Vk.device(), this.computePipeline, null);

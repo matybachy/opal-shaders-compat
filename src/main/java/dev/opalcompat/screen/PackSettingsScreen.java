@@ -20,6 +20,7 @@ import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.narration.NarratableEntry;
@@ -28,22 +29,42 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.StringTokenizer;
 
 /**
  * A pack's own pages, {@code screen.*}, {@code sliders} and {@code profile.*} as {@link PackMenu} lays them out,
  * written to the same {@code shaderpacks/<pack>.txt} Iris reads. Cancel leaves, Apply writes and reloads, Done
  * does both. Left click steps forward, right click back, shift and a click returns a setting to the pack's value.
+ * <p>
+ * The field at the top searches every page at once, by a setting's name as the pack words it and by the name it has in
+ * the pack's files. What matches is listed in one column with the page it is on; a page that matches can be opened
+ * from there.
  */
 public final class PackSettingsScreen extends Screen {
 
 	private static final int ROW = 24;
+	private static final int CELL = 20;
 	private static final int GAP = 4;
+	private static final int TOP = 56;
+	private static final int FOOTER = 50;
+	private static final int MOST_RESULTS = 300;
+
+	/** A setting, or with {@code option} null a page, and what a search reads of it. */
+	private record Found(MenuOption option, String page, String on, String words) {
+	}
 
 	private final Screen parent;
 	private final PackSession session;
@@ -52,8 +73,14 @@ public final class PackSettingsScreen extends Screen {
 	private final MenuValues values;
 	private final Deque<String> walked = new ArrayDeque<>();
 	private final List<Refreshed> live = new ArrayList<>();
+	private final List<Found> index = new ArrayList<>();
+	private final Map<String, String> parents = new HashMap<>();
+	private PageList list;
+	private EditBox search;
 	private Button apply;
 	private Button back;
+	private String query = "";
+	private int found;
 	private String error;
 
 	PackSettingsScreen(Screen parent, PackSession session) {
@@ -64,39 +91,126 @@ public final class PackSettingsScreen extends Screen {
 		this.lang = this.menu.lang();
 		this.values = MenuValues.of(this.menu, session.saved().values(), session.forcedText());
 		this.walked.push("");
+		readIndex();
+	}
+
+	/** Every page that can be walked to from the first, and each setting on the first page that places it. */
+	private void readIndex() {
+		Deque<String> waiting = new ArrayDeque<>();
+		Set<String> pages = new HashSet<>();
+		Set<String> options = new HashSet<>();
+		waiting.add("");
+		pages.add("");
+		while (!waiting.isEmpty()) {
+			String id = waiting.poll();
+			MenuPage page = this.menu.page(id).orElse(null);
+			if (page == null) continue;
+			for (MenuSlot slot : page.slots()) {
+				if (slot instanceof MenuSlot.Option placed) {
+					MenuOption option = placed.option();
+					if (options.add(option.name())) {
+						this.index.add(new Found(option, null, id, plain(this.lang.option(option.name())) + " " + plain(option.name())));
+					}
+				} else if (slot instanceof MenuSlot.Link link && link.resolved() && pages.add(link.page())) {
+					this.parents.put(link.page(), id);
+					waiting.add(link.page());
+					this.index.add(new Found(null, link.page(), id, plain(this.lang.page(link.page())) + " " + plain(link.page())));
+				}
+			}
+		}
+	}
+
+	/** Without the section signs a pack colours its names with, in one case. */
+	private static String plain(String text) {
+		String stripped = text == null ? null : ChatFormatting.stripFormatting(text);
+		return stripped == null ? "" : stripped.toLowerCase(Locale.ROOT);
+	}
+
+	/** The pages down to this one, by their names. */
+	private String trail(String page) {
+		Deque<String> names = new ArrayDeque<>();
+		int steps = 0;
+		for (String at = page; at != null && !at.isEmpty() && steps < 16; at = this.parents.get(at), steps++) {
+			String name = ChatFormatting.stripFormatting(this.lang.page(at));
+			names.push(name == null ? at : name);
+		}
+		return String.join(" / ", names);
+	}
+
+	private boolean searching() {
+		return !this.query.isBlank();
+	}
+
+	private List<Found> matches() {
+		List<String> words = new ArrayList<>();
+		for (StringTokenizer tokens = new StringTokenizer(plain(this.query)); tokens.hasMoreTokens(); ) words.add(tokens.nextToken());
+		List<Found> matching = new ArrayList<>();
+		for (Found entry : this.index) {
+			boolean all = true;
+			for (String word : words) all &= entry.words().contains(word);
+			if (all) matching.add(entry);
+			if (matching.size() == MOST_RESULTS) break;
+		}
+		return matching;
 	}
 
 	@Override
 	protected void init() {
-		this.live.clear();
-		PageList list = new PageList(this.minecraft, this.width, this.height - 72, 32);
-		this.menu.page(this.walked.peek()).ifPresent(list::fill);
-		addRenderableWidget(list);
+		int fieldWidth = Math.min(260, this.width - 60);
+		this.search = Flat.search(this.font, (this.width - fieldWidth) / 2, 36, fieldWidth, Component.translatable("opalcompat.screen.search"));
+		this.search.setValue(this.query);
+		this.search.setResponder(text -> {
+			if (text.equals(this.query)) return;
+			this.query = text;
+			fillList();
+		});
+		addRenderableWidget(this.search);
+
+		this.list = new PageList(this.minecraft, this.width, this.height - TOP - FOOTER, TOP);
+		addRenderableWidget(this.list);
 
 		int width = Math.min(100, (this.width - 20 - 3 * GAP) / 4);
 		int x = (this.width - 4 * width - 3 * GAP) / 2;
-		int y = this.height - 30;
-		addRenderableWidget(Button.builder(Component.translatable("opalcompat.screen.reset"), b -> resetAll()).bounds(x, y, width, 20).build());
+		int y = this.height - 28;
+		addRenderableWidget(new Flat.Action(x, y, width, Component.translatable("opalcompat.screen.reset"), false, b -> resetAll()));
 		x += width + GAP;
-		this.back = addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> goBack()).bounds(x, y, width, 20).build());
+		this.back = addRenderableWidget(new Flat.Action(x, y, width, CommonComponents.GUI_CANCEL, false, b -> goBack()));
 		x += width + GAP;
-		this.apply = addRenderableWidget(Button.builder(Component.translatable("opalcompat.screen.apply"), b -> applySettings()).bounds(x, y, width, 20).build());
+		this.apply = addRenderableWidget(new Flat.Action(x, y, width, Component.translatable("opalcompat.screen.apply"), false, b -> applySettings()));
 		x += width + GAP;
-		addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> {
+		addRenderableWidget(new Flat.Action(x, y, width, CommonComponents.GUI_DONE, true, b -> {
 			applySettings();
 			if (this.error == null) this.minecraft.setScreen(this.parent);
-		}).bounds(x, y, width, 20).build());
+		}));
+		fillList();
+		setInitialFocus(this.search);
+	}
+
+	/** The page that is open, or what the search finds. */
+	private void fillList() {
+		this.live.clear();
+		this.list.empty();
+		if (searching()) {
+			List<Found> matching = matches();
+			this.found = matching.size();
+			this.list.fill(matching);
+		} else {
+			this.menu.page(this.walked.peek()).ifPresent(this.list::fill);
+		}
 		refresh();
 	}
 
 	private void refresh() {
 		this.live.forEach(Refreshed::refresh);
 		this.apply.active = this.values.pendingCount() > 0;
-		this.back.setMessage(this.walked.size() > 1 ? CommonComponents.GUI_BACK : CommonComponents.GUI_CANCEL);
+		this.back.setMessage(searching() || this.walked.size() > 1 ? CommonComponents.GUI_BACK : CommonComponents.GUI_CANCEL);
 	}
 
+	/** Out of a search first, then up a page, then out of the screen. */
 	private void goBack() {
-		if (this.walked.size() > 1) {
+		if (searching()) {
+			this.search.setValue("");
+		} else if (this.walked.size() > 1) {
 			this.walked.pop();
 			rebuildWidgets();
 		} else {
@@ -105,6 +219,7 @@ public final class PackSettingsScreen extends Screen {
 	}
 
 	private void open(String page) {
+		this.query = "";
 		this.walked.push(page);
 		rebuildWidgets();
 	}
@@ -132,16 +247,43 @@ public final class PackSettingsScreen extends Screen {
 	}
 
 	@Override
+	public boolean keyPressed(int key, int scan, int modifiers) {
+		if (key == GLFW.GLFW_KEY_F && Screen.hasControlDown()) {
+			setFocused(this.search);
+			return true;
+		}
+		return super.keyPressed(key, scan, modifiers);
+	}
+
+	@Override
+	public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+		super.renderBackground(graphics, mouseX, mouseY, partialTick);
+		Flat.searchGround(graphics, this.search);
+	}
+
+	@Override
 	public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
 		super.render(graphics, mouseX, mouseY, partialTick);
-		String page = this.walked.peek();
-		graphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
-		if (!page.isEmpty()) graphics.drawCenteredString(this.font, pack(this.lang.page(page)), this.width / 2, 20, 0xA0A0A0);
+		graphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+		Component under;
+		if (searching()) {
+			under = Component.translatable("opalcompat.screen.results", this.found);
+		} else {
+			String trail = trail(this.walked.peek());
+			under = trail.isEmpty() ? Component.translatable("opalcompat.screen.hint") : Component.literal(trail);
+		}
+		graphics.drawCenteredString(this.font, under, this.width / 2, 20, Flat.TEXT_DIM);
+		Flat.searchHint(graphics, this.font, this.search, Component.translatable("opalcompat.screen.search"));
+		if (searching() && this.found == 0) {
+			graphics.drawCenteredString(this.font, Component.translatable("opalcompat.screen.no_results", this.query.trim()),
+					this.width / 2, TOP + 20, Flat.TEXT_DIM);
+		}
+		int noteY = this.height - 42;
 		if (this.error != null) {
-			graphics.drawCenteredString(this.font, Component.literal(this.error).withStyle(ChatFormatting.RED), this.width / 2, this.height - 42, 0xFFFFFF);
+			graphics.drawCenteredString(this.font, Component.literal(this.error).withStyle(ChatFormatting.RED), this.width / 2, noteY, 0xFFFFFFFF);
 		} else if (this.values.pendingCount() > 0) {
-			graphics.drawCenteredString(this.font, Component.translatable("opalcompat.screen.pending_changes", this.values.pendingCount())
-					.withStyle(ChatFormatting.YELLOW), this.width / 2, this.height - 42, 0xFFFFFF);
+			graphics.drawCenteredString(this.font, Component.translatable("opalcompat.screen.pending_changes", this.values.pendingCount()),
+					this.width / 2, noteY, Flat.CHANGED);
 		}
 	}
 
@@ -159,13 +301,21 @@ public final class PackSettingsScreen extends Screen {
 		void refresh();
 	}
 
-	/** A setting's name, its value, and yellow while what is shown is not what is drawn. */
+	/** A setting's name and its value in one line, for the narrator. */
 	private Component label(MenuOption option, String value) {
-		MutableComponent shown = option.form() == MenuOption.Form.TOGGLE
-				? ("on".equals(value) ? CommonComponents.OPTION_ON : CommonComponents.OPTION_OFF).copy()
-				: pack(this.lang.value(option.name(), value));
-		if (this.values.modified(option.name())) shown = shown.withStyle(ChatFormatting.YELLOW);
-		return pack(this.lang.option(option.name())).append(": ").append(shown);
+		return pack(this.lang.option(option.name())).append(": ").append(shown(option, value));
+	}
+
+	private Component shown(MenuOption option, String value) {
+		if (option.form() == MenuOption.Form.TOGGLE) return "on".equals(value) ? CommonComponents.OPTION_ON : CommonComponents.OPTION_OFF;
+		return pack(this.lang.value(option.name(), value));
+	}
+
+	/** Yellow while what is shown is not what is drawn, the accent where it is not the pack's own value. */
+	private int valueColour(AbstractWidget widget, MenuOption option, String value) {
+		if (!widget.active) return Flat.TEXT_OFF;
+		if (this.values.modified(option.name())) return Flat.CHANGED;
+		return value.equals(option.defaultValue()) ? Flat.TEXT_DIM : Flat.ACCENT;
 	}
 
 	private Tooltip optionTooltip(MenuOption option) {
@@ -175,51 +325,31 @@ public final class PackSettingsScreen extends Screen {
 	private AbstractWidget widget(MenuSlot slot, int width) {
 		return switch (slot) {
 			case MenuSlot.Blank blank -> null;
-			case MenuSlot.Option option -> optionWidget(option.option(), width);
-			case MenuSlot.Link link -> {
-				Button button = Button.builder(pack(this.lang.page(link.page())).append(" >"), b -> open(link.page()))
-						.bounds(0, 0, width, 20).build();
-				button.active = link.resolved();
-				this.lang.pageComment(link.page()).ifPresent(text -> button.setTooltip(Tooltip.create(pack(text))));
-				yield button;
-			}
-			case MenuSlot.Profiles profiles -> new ProfileButton(width);
+			case MenuSlot.Option option -> optionWidget(option.option(), width, null);
+			case MenuSlot.Link link -> new LinkCell(link.page(), link.resolved(), width, null);
+			case MenuSlot.Profiles profiles -> new ProfileCell(width);
 		};
 	}
 
-	private AbstractWidget optionWidget(MenuOption option, int width) {
+	private AbstractWidget optionWidget(MenuOption option, int width, String note) {
 		boolean forced = this.values.forced(option.name());
-		AbstractWidget widget = option.slider() ? new SliderButton(option, width) : new OptionButton(option, width);
+		AbstractWidget widget = option.slider() ? new SliderCell(option, width, note) : new OptionCell(option, width, note);
 		widget.active = !forced && option.form() != MenuOption.Form.FIXED;
 		widget.setTooltip(optionTooltip(option));
 		return widget;
 	}
 
-	private final class OptionButton extends AbstractButton implements Refreshed {
-		private final MenuOption option;
+	/** A tile that steps with the left button and back with the right. */
+	private abstract class Cell extends AbstractButton implements Refreshed {
+		protected final String note;
 
-		OptionButton(MenuOption option, int width) {
-			super(0, 0, width, 20, Component.empty());
-			this.option = option;
+		Cell(int width, String note) {
+			super(0, 0, width, CELL, Component.empty());
+			this.note = note;
 			PackSettingsScreen.this.live.add(this);
-			refresh();
 		}
 
-		@Override
-		public void refresh() {
-			setMessage(label(this.option, PackSettingsScreen.this.values.pending(this.option.name())));
-		}
-
-		private void step(int by) {
-			var values = PackSettingsScreen.this.values;
-			String name = this.option.name();
-			if (Screen.hasShiftDown()) {
-				values.reset(name);
-			} else {
-				values.queue(name, this.option.at(this.option.indexOf(values.pending(name)) + by));
-			}
-			PackSettingsScreen.this.refresh();
-		}
+		abstract void step(int by);
 
 		@Override
 		public void onPress() {
@@ -242,12 +372,54 @@ public final class PackSettingsScreen extends Screen {
 		}
 	}
 
-	private final class SliderButton extends AbstractSliderButton implements Refreshed {
+	private final class OptionCell extends Cell {
 		private final MenuOption option;
 
-		SliderButton(MenuOption option, int width) {
-			super(0, 0, width, 20, Component.empty(), position(option, PackSettingsScreen.this.values.pending(option.name())));
+		OptionCell(MenuOption option, int width, String note) {
+			super(width, note);
 			this.option = option;
+			refresh();
+		}
+
+		@Override
+		public void refresh() {
+			setMessage(label(this.option, PackSettingsScreen.this.values.pending(this.option.name())));
+		}
+
+		@Override
+		void step(int by) {
+			var values = PackSettingsScreen.this.values;
+			String name = this.option.name();
+			if (Screen.hasShiftDown()) {
+				values.reset(name);
+			} else {
+				values.queue(name, this.option.at(this.option.indexOf(values.pending(name)) + by));
+			}
+			PackSettingsScreen.this.refresh();
+		}
+
+		@Override
+		protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+			var screen = PackSettingsScreen.this;
+			String value = screen.values.pending(this.option.name());
+			boolean changed = screen.values.modified(this.option.name());
+			Flat.tile(graphics, this);
+			if (changed) graphics.fill(getX(), getY(), getX() + 2, getY() + getHeight(), Flat.CHANGED);
+			int right = this.option.form() == MenuOption.Form.TOGGLE
+					? Flat.toggle(graphics, this, "on".equals(value))
+					: Flat.value(graphics, screen.font, this, shown(this.option, value), valueColour(this, this.option, value));
+			Flat.name(graphics, screen.font, this, pack(screen.lang.option(this.option.name())), this.note, getX() + Flat.PAD + 2, right);
+		}
+	}
+
+	private final class SliderCell extends AbstractSliderButton implements Refreshed {
+		private final MenuOption option;
+		private final String note;
+
+		SliderCell(MenuOption option, int width, String note) {
+			super(0, 0, width, CELL, Component.empty(), position(option, PackSettingsScreen.this.values.pending(option.name())));
+			this.option = option;
+			this.note = note;
 			PackSettingsScreen.this.live.add(this);
 			updateMessage();
 		}
@@ -284,14 +456,58 @@ public final class PackSettingsScreen extends Screen {
 			PackSettingsScreen.this.values.queue(this.option.name(), value);
 			PackSettingsScreen.this.refresh();
 		}
+
+		/** The tile fills up to where the game's own slider would have its handle. */
+		@Override
+		public void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+			var screen = PackSettingsScreen.this;
+			String value = screen.values.pending(this.option.name());
+			Flat.tile(graphics, this);
+			int reach = 4 + (int) Math.round(this.value * (getWidth() - 8));
+			graphics.fill(getX(), getY(), getX() + reach, getY() + getHeight(), Flat.FILL);
+			graphics.fill(getX() + reach - 1, getY(), getX() + reach + 1, getY() + getHeight(), this.active ? Flat.ACCENT : Flat.TEXT_OFF);
+			if (screen.values.modified(this.option.name())) graphics.fill(getX(), getY(), getX() + 2, getY() + getHeight(), Flat.CHANGED);
+			int right = Flat.value(graphics, screen.font, this, shown(this.option, value), valueColour(this, this.option, value));
+			Flat.name(graphics, screen.font, this, pack(screen.lang.option(this.option.name())), this.note, getX() + Flat.PAD + 2, right);
+		}
+	}
+
+	private final class LinkCell extends Cell {
+		private final String page;
+
+		LinkCell(String page, boolean resolved, int width, String note) {
+			super(width, note);
+			this.page = page;
+			this.active = resolved;
+			PackSettingsScreen.this.lang.pageComment(page).ifPresent(text -> setTooltip(Tooltip.create(pack(text))));
+			refresh();
+		}
+
+		@Override
+		public void refresh() {
+			setMessage(pack(PackSettingsScreen.this.lang.page(this.page)));
+		}
+
+		@Override
+		void step(int by) {
+			if (by > 0) open(this.page);
+		}
+
+		@Override
+		protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+			var screen = PackSettingsScreen.this;
+			Flat.tile(graphics, this);
+			int right = Flat.value(graphics, screen.font, this, Component.literal(">"), this.active ? Flat.ACCENT : Flat.TEXT_OFF);
+			Flat.name(graphics, screen.font, this, getMessage(), this.note, getX() + Flat.PAD + 2, right);
+		}
 	}
 
 	/** Walks the pack's profiles from the most constrained; what the values amount to is read back from them. */
-	private final class ProfileButton extends AbstractButton implements Refreshed {
+	private final class ProfileCell extends Cell {
+		private Component profile = Component.empty();
 
-		ProfileButton(int width) {
-			super(0, 0, width, 20, Component.empty());
-			PackSettingsScreen.this.live.add(this);
+		ProfileCell(int width) {
+			super(width, null);
 			PackSettingsScreen.this.lang.profileComment().ifPresent(text -> setTooltip(Tooltip.create(pack(text))));
 			refresh();
 		}
@@ -299,12 +515,13 @@ public final class PackSettingsScreen extends Screen {
 		@Override
 		public void refresh() {
 			String current = PackSettingsScreen.this.values.matchedProfile();
-			Component shown = current.isEmpty() ? Component.translatable("opalcompat.screen.profile_custom")
+			this.profile = current.isEmpty() ? Component.translatable("opalcompat.screen.profile_custom")
 					: pack(PackSettingsScreen.this.lang.profile(current));
-			setMessage(Component.translatable("opalcompat.screen.profile").append(": ").append(shown));
+			setMessage(Component.translatable("opalcompat.screen.profile").append(": ").append(this.profile));
 		}
 
-		private void step(int by) {
+		@Override
+		void step(int by) {
 			List<String> names = PackSettingsScreen.this.menu.profileNames();
 			if (names.isEmpty()) return;
 			int at = names.indexOf(PackSettingsScreen.this.values.matchedProfile());
@@ -314,23 +531,11 @@ public final class PackSettingsScreen extends Screen {
 		}
 
 		@Override
-		public void onPress() {
-			step(1);
-		}
-
-		@Override
-		public boolean mouseClicked(double mouseX, double mouseY, int button) {
-			if (button == 1 && this.active && this.visible && isHovered()) {
-				playDownSound(Minecraft.getInstance().getSoundManager());
-				step(-1);
-				return true;
-			}
-			return super.mouseClicked(mouseX, mouseY, button);
-		}
-
-		@Override
-		protected void updateWidgetNarration(NarrationElementOutput output) {
-			defaultButtonNarrationText(output);
+		protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+			var screen = PackSettingsScreen.this;
+			Flat.tile(graphics, this);
+			int right = Flat.value(graphics, screen.font, this, this.profile, this.active ? Flat.ACCENT : Flat.TEXT_OFF);
+			Flat.name(graphics, screen.font, this, Component.translatable("opalcompat.screen.profile"), null, getX() + Flat.PAD + 2, right);
 		}
 	}
 
@@ -342,12 +547,28 @@ public final class PackSettingsScreen extends Screen {
 
 		@Override
 		public int getRowWidth() {
-			return Math.min(this.width - 40, 840);
+			return Math.min(this.width - 40, 760);
 		}
 
 		@Override
 		protected int getScrollbarPosition() {
 			return (this.width + getRowWidth()) / 2 + 6;
+		}
+
+		/** The tiles stand on the screen's own background. */
+		@Override
+		protected void renderListBackground(GuiGraphics graphics) {
+		}
+
+		@Override
+		protected void renderListSeparators(GuiGraphics graphics) {
+			graphics.fill(getX(), getY() - 1, getRight(), getY(), Flat.LINE);
+			graphics.fill(getX(), getBottom(), getRight(), getBottom() + 1, Flat.LINE);
+		}
+
+		void empty() {
+			clearEntries();
+			setScrollAmount(0.0);
 		}
 
 		void fill(MenuPage page) {
@@ -364,6 +585,21 @@ public final class PackSettingsScreen extends Screen {
 				}
 			}
 			if (!widgets.isEmpty()) addEntry(new Line(widgets, width));
+		}
+
+		/** What a search found, one to a row, each with the page it is on. */
+		void fill(List<Found> matching) {
+			int width = getRowWidth();
+			for (Iterator<Found> entries = matching.iterator(); entries.hasNext(); ) {
+				Found entry = entries.next();
+				String on = trail(entry.on());
+				AbstractWidget widget = entry.option() != null
+						? optionWidget(entry.option(), width, on)
+						: new LinkCell(entry.page(), true, width, on);
+				List<AbstractWidget> row = new ArrayList<>(1);
+				row.add(widget);
+				addEntry(new Line(row, width));
+			}
 		}
 
 		/** One row of a page by position: a blank is a slot too, and a pack aligns its columns by them. */

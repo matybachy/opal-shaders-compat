@@ -172,6 +172,209 @@ No crash and no pack error in the logs of the Create instance: what was wrong sh
 **Not verified:** a multiplayer server, which is where the user's log came from; whether the flicker is gone to the user's eye (two frozen frames differ by 0.71 per channel on
 average, and water and clouds keep moving; no comparison with the old jar, the user's decision); the first run of a pack, whose stops the cache does not help.
 
+## Flicker and slow far terrain (2026-11-09)
+
+The user's log of 2026-11-08 21:59 is from a server, render distance 5, 2560x1440, DH 256 chunks. No error of this mod in it; the flicker was seen in the
+window of `test-instance/createset` while moving. A still camera does not show it: two frozen frames differed by 0.44 per channel at most, and 0.44 is what the old
+measurement took for good. `scripts/scenes/blink.txt` with `render/BlinkProbe` measures it with the camera moving: every frame shrunk to cells of 64 px, and a cell
+that jumps and jumps back counts as a blink.
+
+| Symptom | Cause and proof | Solution |
+|---|---|---|
+| Every shadow on the screen jumps for one frame while walking | Vitrail fills the shadow map at the end of a frame and samples it through the next, which is what `mapShadowModelView` is for: last frame's matrix moved onto this camera. This mod fills the map at the head of the frame that samples it (Iris's order) but still published that pair. The fresh matrix is snapped to `shadowIntervalSize`, so the two part by a whole cell on the one frame the camera crosses into another: every 2 blocks. Slow drift over 10 blocks, 5 crossings: 5 frames of 856 with a blink before, 0 of 894 after, same scene in one run. | `ViewMatrices.advanceShadow`: a frame that fills the map publishes the pair it draws with. |
+| The water turns white beyond a hard straight line, and light and history swim, only while walking | The game multiplies the walk bob, the damage tilt and the nausea into its projection. Iris moves them to the model view (`MixinModelViewBobbing`: "causes severe issues with most shaderpacks"), Vitrail splits them where a pack reads them (`CameraBob`). This port passed the identity, with a comment that Iris does the same. A pack's `ScreenToView` reads the projection as a diagonal, so the position it rebuilds from depth swings with each step. Same path in one run (`scripts/scenes/water_line.txt`): `wl_bob3.png` white plate and a hard line, `wl_nobob2.png` none. | `GameRendererMixin` keeps the first `getProjectionMatrix` of `renderLevel`; `LevelCapture.bob()` is that matrix's inverse times what the level is drawn with. A pack gets the clean projection and `bob * view`, whose product is the same matrix, so the same pixels. After: `wl_bob3.png` as standing. |
+| Far terrain loads slowly | `RenderThreadTaskHandler` allows half a frame at the frame limit, and `1000 / 260 / 2` is 1.5 ms; it stops once `total + 2 * task` passes that. `LodBuffer` went through `TransferQueue.copyBufferCmd`, one `vkQueueSubmit` for each buffer, so about one task a frame. Loader threads wait in `.join()` in `LodRenderSection`, and they hold slots of the one pool of `numberOfThreads` (`PriorityTaskPicker.occupiedThreadsRef`) that file reads and LOD building need as well. | `DhRenderTasksMixin`: 5 ms, once a frame. `LodUploads`: one frame's copies in one submission to the graphics queue through `UploadManager`, ahead of the frame that draws them. Measured after: 900 to 1200 buffers and 260 to 360 MB per 10 s from the database. No number from before: not compared with the old jar, the user's decision. |
+| Far terrain's indices fetched over the bus | `LodIndices` lay in host memory, and a far view reads millions of them a frame. | On the device, 256 K quads to begin with. |
+| `Unexpected error in [LodRequestModule] tick loop` on joining a server | Two threads unload the same level, `DhClientWorld.unloadLevel` takes null out of the map. | `DhClientWorldMixin`. |
+| 21 warnings `reads colortexN from the half it writes` | `lib/uniforms.glsl` of Complementary declares every colortex in every program. What reads white there is mostly a name nothing reads. | Debug level. |
+
+With both fixes, in `blink.txt` at render distance 5: standing 0 of 441 frames with a blink, slow drift 0 of 929, flying high 0 of 866, turning 6 of 888 and none wide,
+no near or far section gone for a few frames and back in any of these. Flying low and walking still count blinks (555 of 978, 775 of 1305), and the frames saved for
+them show near walls and buildings going by, a fine pattern passing through a cell: the image detector cannot tell that from a blink close to the ground. There 1 near
+and 17 far sections of hundreds were gone and back. Sections at the edge of the frustum, which the bob moves to and fro, would count like that; not verified.
+
+Two more from reading the code, not observed in a run: `buildRenderList` copies the list of enabled sections and then asks each whether it is still enabled, while the
+quad tree swaps the list and disables the old sections from its own thread (`DhRenderListMixin`); and a section closed by that thread only has its flag cleared, its
+buffers staying until a task on the render thread, so the draw no longer skips it. `LodWatch` writes a line when far terrain goes missing for a frame, for logs from
+a server, which the tests cannot reach.
+
+`FpsReducer2` is held out of `test-instance/createset` (`test-instance/jars/createset-held`): without focus it slows the render thread so far that a load takes tens of minutes.
+
+**Not verified:** a server, where the user's log came from; the user's own instance; whether anything still flickers to the eye. The black reflection of mountains in water is seen in `wl_still.png` and was not looked into.
+
+The upload idea comes from [distant-horizons-vulkanmod](https://github.com/Braffolk/distant-horizons-vulkanmod) (LGPL-3.0-only, Fabric on 1.20.6 and 1.21.11, so it cannot
+run here): keep DH's upload task cheap, and an index buffer big enough from the start. No code of it is taken.
+
+## Far terrain at the speed of the frame rate (2026-11-09)
+
+The user's log of 2026-11-09 17:25 (`logs/2026-11-09_17-25-08.log`): a new world (`saves/New World (1)`, its DH database 6.4 MB), Complementary Unbound, 2560x1440,
+render distance 5, `maxFps:260`, ZGC with 15 GB. `[dh] 598 LOD buffers, 122 MB uploaded in 10 s`, then `920 LOD buffers, 128 MB uploaded in 24 s`; slow next to the
+same set with Sodium. Built, not run: the user tests it in the game.
+
+| Where it waits | Proof | Change |
+|---|---|---|
+| Every section waits for a frame | `LodRenderSection.getAndBuildRenderDataRunnable` builds the mesh on a loader thread and then `uploadToGpuAsync(...).join()`. `LodBufferContainer.tryMakeAndUploadBuffersAsync` puts its "LodBufferContainer Setup" and "LodBufferContainer VBO Upload" on `RenderThreadTaskHandler`'s queue, which runs once a frame from `ClientApi.renderLodLayer`. | `DhRenderTasksMixin` runs those two (and "IBO Upload") on the thread that queues them, where `LodTransfer` can take them. |
+| The waiting thread holds a slot of DH's one pool | `PriorityTaskPicker.startNextTask` starts a task while `occupiedThreadsRef < numberOfThreads`; IO, LOD Builder, Update Propagator and World Gen take from the same slots, and "Render Loader" has priority 6 against their 5 (`ThreadPoolUtil.setupThreadPools`). | The loader waits for its own copy only, well under a millisecond, and the slot is free for the rest. |
+| So the frame rate set the pace | At 40 FPS a section waits 25 ms on average plus its share of the 1.5 ms task budget; with no pack on OpenGL at several times the frame rate the same wait is that much shorter. | `LodTransfer`: the vertices go into a pooled staging buffer and through VulkanMod's transfer queue, with a command pool of its own; the thread waits for that fence, and DH lists the section after that, as before. |
+
+Safety of the new road: the device buffers come from VMA directly (`LodDeviceBuffer`), which locks itself, because `MemoryManager.createBuffer` keeps its books in a map that
+`MemoryManager.freeBuffer(long, long)` changes without the lock (`Drawer`, `ImageUtil`). They are shared between the graphics and the transfer family (`VK_SHARING_MODE_CONCURRENT`), and go
+through VulkanMod's queue of frames when DH lets them go (`addFrameOp`). Submissions hold the transfer queue's monitor, as VulkanMod's `Queue.submitCommands` does, and `QueueLock`,
+which VulkanMod's `Vulkan.waitIdle` and this mod's waits for the device take too (`VulkanIdleMixin`); `Vulkan.cleanUp` stops the copies. Each far terrain draw starts with a barrier
+that makes the copies visible to vertex input. Where the transfer queue is the graphics queue, or a copy fails, the uploads go back to the render thread (`LodUploads`), and the log
+says so once. The log line every 10 s now says how many buffers came from DH's threads.
+
+Not verified: all of it at run time; whether DH's world generation on a new world, which these numbers may be limited by as well, is now the slower part.
+
+## Freezes at first sight (2026-11-09)
+
+The user's log `logs/2026-11-09_20-05-59.log`, on a server with Complementary Unbound: 214 printed frames over 25 ms in 100 s, 12 of them over 300 ms. In VulkanMod's
+own breakdown of those frames (`upload`, `sched`, `graph`, `fence`, `gpuWait`, `present`) nearly nothing is spent, so the time is this mod's. Built, not run.
+
+| Freeze | Proof | Change |
+|---|---|---|
+| 1501 ms at 20:15:38, 738 ms at 20:16:27 | `[pack] 12 pipelines built in 1404 ms` printed at 20:15:51 and `3 pipelines built in 633 ms` at 20:16:37; `PipelineCache` prints ten seconds after the last pipeline. The driver builds a pipeline of this pack it has not seen in up to a second, on the frame that asked. | `PackPipeline.readyPipeline`: mesh pipelines are built on the shader thread, and the draw asking is left out until its pipeline is there. |
+| 1142, 654 and 533 ms at 20:15:11 to 20:15:16, just after joining | Pipelines came from the cache then (`28 pipelines built in 44 ms`). In the debug log of 18:26 the same frames follow the first use of `gbuffers_entities`, `gbuffers_textured`, `gbuffers_block`. Timed outside the game, a mesh program of this pack takes 50 to 790 ms to translate and 26 to 280 ms to compile. | `MeshPrograms`: both happen on the shader thread; what asks for a program still being prepared is left out. |
+
+The shader thread is the only reader of the open pack once it is loaded (`ShaderPackSource` keeps memos for one thread), and `MeshPrograms.close` waits for it before the pack closes.
+`FrameStats` prints every ten seconds what the mesh draws cost a frame and how many draws were left out waiting: the 25 to 40 ms frames, 170 of the 214, are not explained yet,
+and this is the number to start from.
+
+Left as it is: the 5.4 s of `[pack] ... loaded in 5392 ms`, which is on the loading screen while joining.
+
+## Blocks late or invisible: VulkanMod Reforged's upload ceiling (2026-11-11)
+
+Built, not run: the user tests in the game.
+
+The report: blocks invisible, and blocks appearing very late. The logs `2026-11-10_20-35-33.log` and `2026-11-11_15-58-59.log` of the user's instance, and
+`config/vulkanmod_settings.json` there, which has `"chunkUploadsPerFrame": 1` ("Chunk Upload Ceiling", 1 to 16; VMR's presets use 3, 5, 8 and 16).
+
+- VMR's `TaskDispatcher.updateSections` uploads at most that many finished sections a frame (`getMaxUploadsPerFrame`, through `AdaptiveChunkUploadBudget.chooseBudget`,
+  which returns the ceiling when there is no pressure). In the spike lines of the first log 673 frames uploaded one section and 418 none.
+- Finished meshes wait in an `ArrayBlockingQueue` of 64 (`ChunkSchedulingPolicy.MAX_PENDING_COMPILE_RESULTS`). It stood at 64 after 160 of the 1121 spike frames.
+- A builder that finishes while it is full waits in `scheduleSectionUpdate`, offering every 10 ms, and that wait is inside what VMR times as the build: 164 ms on
+  average, 95.7 s at most.
+- While a mesh waits, the next change to its section cancels it (`RenderSection.createCompileTask` calls `cancelTasks`), so a section that keeps changing can keep
+  its old mesh, or none, for as long as the changes go on.
+- The second log is two short stays of about two and about half a minute, at 16 to 47 frames a second: at one section a frame, not enough for the 121 columns of
+  render distance 5. The first join of the session also rebuilt the world once (`BlockStateIds.rebuildIfMoved`, "The block ids moved, from 0 states"), but VMR's
+  buffers were still empty then (`[ChunkDiag] buffers: Vertex Buffers: 0/0 MB` a second later), so that cost nothing.
+
+What Opal Compat draws of the terrain was compared with VMR's own draw and is the same: the area queue, `DrawParameters`, the layers VMR folds with
+`uniqueOpaqueLayer` (`BuildTask.compactRenderTypes` and `TerrainRenderType.COMPACT_RENDER_TYPES`). No error or warning about chunks is in either log.
+
+`terrain/ChunkFlow`, so that the ceiling no longer decides it:
+
+- `TaskDispatcherFlowMixin` raises the ceiling to the number of meshes waiting, up to 64, while more are waiting than it allows. VMR's own budgets still end the
+  frame's uploads: 2 ms and 6 MB, 1 to 1.5 ms and 3 to 4 MB under pressure (`AdaptiveChunkUploadBudget`). In the first log an upload took 0.1 to 0.2 ms.
+- A section VMR calls urgent (`SectionGraph.isUrgentRebuild`: changed by the player, or within 27 blocks of the camera) is marked on its task
+  (`SectionGraphUrgencyMixin`, `BuildTaskUrgencyMixin`). It is built before every queued task, and its mesh goes into a queue of its own that the upload empties
+  first, without waiting for room in VMR's. `clearBatchQueue` empties that queue too, and `isIdle` counts it.
+- `[chunks]` every 10 s, from VMR's own count (`ChunkUploadCountMixin` on `ChunkFrameDiagnostics.recordUploads`): sections and MB uploaded, frames after which
+  the queue was full, how soon the urgent ones were ready after they were scheduled, and how long builders spent handing meshes over.
+
+Off with `chunkFlow=false` in `config/opalcompat.properties`.
+
+Not verified: all of it at run time, and whether invisible blocks are all of this kind; a block missing for another reason would show up as one that stays missing
+while `[chunks]` says the queue is empty.
+
+## Frame rate: what the log of 2026-11-10 says, and a sampler for what it cannot (2026-11-10)
+
+Built, not run: the user tests in the game.
+
+The report: 60 to 70 frames a second falling to 45 and below. `logs/2026-11-10_14-30-24.log` of the user's instance, in the Nether of a server, 2560x1440, render distance 5,
+213 mods, Complementary Unbound + Euphoria Patches with `SHADOW_QUALITY=3`, `COLORED_LIGHTING=192`, Distant Horizons at 256 chunks.
+
+What it shows:
+
+- `[pack]` lines: 603 to 771 frames per 10 s, the longest frame 26 to 399 ms. The pack's mesh draws take 0.93 to 1.85 ms of a frame: not where the time goes.
+- VulkanMod Reforged's `[ChunkDiag] spike` lines (a frame of 25 ms or more, from `Minecraft.runTick`'s head to before `Window.updateDisplay`, so ticks are in it): 120.
+  In 112 of them over 20 ms is in none of its own figures (upload, schedule, graph, fence, wait on the device, present), and 84 have no chunk built, uploaded or queued.
+- Of the 78 spikes after 14:34:10 none waited on the device for more than 0.5 ms (`gpuWait`, which is the frame slot's fence and the swap chain's image). A frame that
+  runs long on the processor after a frame of ordinary length finds the device idle: the frames are limited by the render thread, not by the graphics card.
+- `gc` is 0 in all but two of them. The JVM runs `-XX:+UseZGC -XX:+ZGenerational` (`instance.json`), whose figure there is a cycle's length, not a pause.
+- `[textures]`: 27866 animation frames uploaded and 411100 left alone in 60 s, so `AnimatedSprites` holds back about 340 uploads a tick.
+- Against `2026-11-09_20-05-59.log`, the last one with a pack before that change and the shader thread: small spikes with no chunk work fell from 46.9 to 12.3 per 10 s.
+  Another place in another dimension, so a hint and not a measurement.
+- Distant Horizons uploaded 885 to 1109 buffers per 10 s for the whole session. The four windows with about 650 MB had 603 to 691 frames, the two with about 400 MB had
+  699 and 771. Six windows: a hint that its work costs frames, nothing more. Its 8 threads run at priority 5 (`DistantHorizons.toml`), the render thread at 7
+  (VMR's `RenderSystemMixin`), so they cannot take the processor from it, only share cores with it.
+- vkQueuePresentKHR took 72 to 164 ms five times, three of them in a menu before the world, where nothing of this mod's draws.
+
+What it cannot show is what a frame does with the rest of its time, and whose code that is: nothing in a log does. So:
+
+- `diag/RenderSampler`: a thread asks the render thread for its stack every 5 ms while a pack draws a level, and every 30 s says under `[where]`, for all frames and apart
+  for those of 20 ms or more: the part of the frame (tick, queued packets, entities, block entities, particles, the hud, the shadow pass, the pack's passes, far terrain,
+  the wait at the frame's start, submit), whose code was running, which mods were on the stack, and the ten methods seen most. A mod is told by its module's name, which
+  NeoForge sets to its id, and a mixin's handler by the mod in its name. A frame's samples are counted when its length is known. On by default while the frame rate is being
+  worked on, which should be turned around after; `frameSampler=false` in `config/opalcompat.properties`.
+- `render/FrameStats`: the `[pack]` line now also has the average frame, the slowest second as a frame counter shows it, and how much of the time the render thread had a
+  processor, which tells a thread that works from one that waits.
+- `ShaderPacks.selectedPath` asked the disk whether the pack is there at the head of every frame (`PackRenderer.ensureLoaded`); it asks once a second now.
+
+Looked at and left: the shadow pass cannot be dropped in the Nether with these settings, because `COLORED_LIGHTING` makes the shadow program fill the pack's light voxels
+(`program/shadow.glsl`, `UpdateVoxelMap`), and the pack leaves the program on unless `SHADOW_QUALITY == -1` (`shaders.properties`). No call of this mod's waits on the device
+in a frame: the only ones are at a reload, a resize and a pack image's upload.
+
+Not verified: all of it at run time, and with it the reading above that the render thread is the limit, which the new `[pack]` figure will confirm or not.
+
+## Sodium's optimisations, the pack screens, a review (2026-11-10)
+
+Built, not run: the user tests in the game.
+
+**Sodium.** The user asked for what Sodium has, from `sodium-neoforge-0.9.3-beta.4+mc26.3.jar`. No code of it is taken: its `LICENSE.md` and `neoforge.mods.toml` say
+PolyForm Shield 1.0.0, which forbids a competing product, and it is written for Minecraft 26.3 (`versionRange = "[26.1.2.10-beta,)"`). What it does was compared by its
+mixin groups (`sodium-common.mixins.json`) against VulkanMod Reforged's (`vulkanmod.mixins.json`):
+
+| Sodium | Here |
+|---|---|
+| Chunk meshing and drawing: `core.world.chunk`, `core.world.biome`, `core.model.colors`, `features.textures.scan`, regions, sorting | VMR's own: `render.chunk.build`, `TintCache`, indirect draw |
+| `features.render.entity` (cuboids), `features.render.entity.cull` | VMR: `ModelPartCubeM`, `ModelPartM`, `EntityRendererM` with `entityCulling` |
+| `core.render.immediate.consumer`, `features.render.immediate.*`, `features.render.particle`, `core.model.quad` | VMR: `BufferBuilderM`, `VertexConsumerM`, `SpriteCoordinateExpanderM`, `VertexMultiConsumersM`, `SingleQuadParticleM`, `BakedQuadM`, `DirectionMixin` |
+| `core.render.frustum` | VMR: `chunk.FrustumMixin` |
+| `features.render.entity.shadows` | Not needed with a pack: `EntityRenderDispatcherMixin` drops the blob shadows a pack's own shadows replace |
+| `features.textures.animations.tracking`: animate only visible textures | Was missing. `texture/AnimatedSprites`, below |
+| `workarounds.*`, `features.render.viewport`, `core.GlFallbackAllocatorMixin` | OpenGL only |
+| `features.gui.hooks.*`, `features.render.gui.font`, `features.render.world.clouds`, `features.render.model` | Not taken: screens of Sodium's own, and paths a pack either replaces or that run once at load |
+
+**Animated textures.** The instance's mods carry about 630 animated block, fluid and item textures (`*.png.mcmeta` under `textures/`), and the game uploads a frame of each
+twenty times a second. `AnimatedSprites`, own design: a sprite animates once it has been drawn with. It is marked where its coordinates are asked for
+(`TextureAtlasSpriteUseMixin`), where a baked quad of it is read (`BakedQuadUseMixin`; VMR's `VertexConsumerM.putBulkData` calls `getVertices`) and where VMR meshes one into a
+chunk, which reads the vertices past the getters (`BlockRendererUseMixin`). Baking the models does not count (`ModelBakeryUseMixin`). Only uploads made while an atlas runs its
+animations are held back (`TextureAtlasCycleMixin`, `SpriteContentsUseMixin`), and the frame between two frames is not worked out either (`SpriteInterpolationUseMixin`). A mark
+is never taken back, because a mesh cached by a mod may show a sprite long after it was built. Coarser than Sodium's per-frame visibility, and it cannot freeze what such a cache
+shows. A switch on the Shaders page and `animateUsedTexturesOnly` in `config/opalcompat.properties`; the log says once a minute how many frames were uploaded and how many left alone.
+
+**Pack screens.** `screen/PackSettingsScreen` searches every page of a pack at once, by a setting's name as the pack words it and by its name in the pack's files; a match is
+listed with the page it is on. Tiles are flat (`screen/Flat`): name left, value right, a switch for a toggle, a fill for a slider, yellow for what is not applied yet, the accent
+for what is not the pack's own value. `ShaderPackScreen` filters by name. With Opal in the game the Shaders page used to open Opal's screens (`OpalLink`); it opens these now,
+and Opal's stay behind Opal's own key.
+
+**Review of what had not run.** `FrameStats` never printed: it asked `drawingLevel` at the end of a frame, which `afterLevel` has cleared by then; it now counts frames
+`afterLevel` saw a pack draw. Framebuffers over the swap chain's images were only dropped when the size changed, and a swap chain is rebuilt at the same size too (vsync, frame
+queue): `PackRenderer` and `DistantPlain` now drop them from VMR's resize callback.
+
+Not verified: all of it at run time. Whether leaving unused textures alone is felt, and whether anything that should move stands still: mods that draw from a cache built before
+the first frame without going through any of the three marks would.
+
+## DH's start, and far terrain with no pack (2026-11-09)
+
+Built but not run: the user tests this in the game, at their request. The GLSL of `DistantPlain` was compiled with shaderc outside the game, nothing more.
+
+| What | Why | Where |
+|---|---|---|
+| The Iris check at DH's start | `logIncompatibilityWarnings` takes any `IIrisAccessor` for Iris: with `BLAZE_3D` it crashes the game (`Distant Horizons conditional mod config Exception`), with `AUTO` it forces `OPEN_GL`. | `DhStartMixin` makes this mod's adapter read as absent in that one method. Another accessor passes, and so do the other checks and every other reader of the adapter (`setDisabledDhConfigBasedOnMods`, `LodRenderer`, `RenderUtil`, `ClientApi`). |
+| Far terrain with no pack | `PackRenderer.drawDistant` returned false without a pack, so nothing drew it. | `render/DistantPlain`: DH's `terrain/gl` program on Vulkan, in one render pass over the main image and a depth image of its own, as DH's own depth is on OpenGL. Its fog (`fog/gl/fog.frag`) and far fade (`fade/gl/dh_fade.frag`) are post passes over the picture on OpenGL; here the same formulas run per fragment. `PlainLodValues` reads the settings as DH's shader classes do, `LodAtlas` is `GlBlockTextureAtlas` on VulkanMod's images. |
+| Order on the solid layer | VMR's hook comes before DH's (`BLOCKERS.md`), and with no pack both draw into one image. | `WorldRendererMixin` calls `VkDhBridge.beforeWorldLayer` ahead of VMR's draw, with what DH's hook would have put in `RENDER_STATE`. `DhClientApiMixin` makes the later `renderLods` of DH's hook do nothing; a pack's map still calls it, so only with no pack. |
+| A pipeline VMR does not know of | `Renderer.bindGraphicsPipeline` binds nothing while the handle it holds is the one asked for, and a raw bind leaves that handle in place. | `VkDhBridge.draw` zeroes it after either route. |
+
+Left out with no pack: SSAO, TAA, the fade of the near chunks over the far terrain (`vanilla_fade.frag`), which all read finished images, and DH's clouds and beacons.
+With the walk bob the near and far planes go into the clean projection and the bob on top (`DistantPlain.combined`), or the far terrain would not sway with the chunks in front of it.
+
+`./gradlew patchDistantHorizons` writes a copy of DH to `build/libs/distanthorizons`, same file name, that forces `BLAZE_3D` in code rather than in the config, reports `VULKAN`, and has
+the two remaining OpenGL calls of its NeoForge side out of the way (`LightMapWrapper_neoforge.uploadLightmap`, `NeoforgeClientProxy.afterLevelRenderEvent`; the shader of the far terrain reads the game's own light map). The user asked for it.
+`BLAZE_3D` is a name here: 1.21.1 has no Blaze3D renderer, DH's `BlazeDh*` classes in this jar are empty, `DependencySetup` has no definition for it, and the drawing is `VkDhDefinition`'s. So that copy needs this mod on VMR. The original jar keeps working too.
+
 ## Phase 2 results (interrupted by a limit, 2026-11-03)
 
 A run in a clean instance (`scripts/instance.py`, fresh jar, NeoForge 21.1.228, RTX 5060 Ti, validation layers on):
@@ -276,14 +479,14 @@ in VMR's target, which `final` overwrites: missing from the image, no crash.
 
 **Distant Horizons.** DH 3.3.3 has its rendering behind `AbstractDhRenderApiDefinition` (`IDhTerrainRenderer`, `IVertexBufferWrapper`
 and more). `DhDependencySetupMixin` gives it `VkDhDefinition` instead of OpenGL: buffers are VMR's `VertexBuffer` (GPU, VMA), the terrain
-is drawn by `PackRenderer.distantHalf` with the programs `dh_terrain`, `dh_water`, `dh_shadow`, the other passes (fog, SSAO, fade, TAA,
+is drawn by `PackRenderer.distantHalf` with the programs `dh_terrain`, `dh_water`, `dh_shadow`, or by `DistantPlain` with no pack, the other passes (fog, SSAO, fade, TAA,
 applying to MC) are empty, because the pack takes care of those. `DhMainMixin` adds `IIrisAccessor`, thanks to which DH
 defers water, builds the shadow list without the frustum camera and draws differently without a pack; the id `iris` appears nowhere. Depth:
 own `dhDepthTex0` and a copy `dhDepthTex1` before water, forward like everything else, the projection row from DH's planes.
 Vertex of 16 B (`DistantVertex`), section corner through a dynamic offset of one UBO, one set per half, one index buffer.
 `DISTANT_HORIZONS` is defined only with the bridge active. No fork and no run-time dependency: `libs/` is `compileOnly` only,
-the mixins are applied by `OpalCompatMixinPlugin` only for the exact version 3.3.3 and without `-Dopalcompat.dh=false`. Without a pack LODs
-are not drawn (there is no `dh_` program), nor are DH's clouds and beacons (`dh_generic`).
+the mixins are applied by `OpalCompatMixinPlugin` only for the exact version 3.3.3 and without `-Dopalcompat.dh=false`. DH's clouds and beacons
+are not drawn (`dh_generic`).
 
 ## Codex's work (branch `codex-work`, revision `39fd05e`)
 
@@ -344,6 +547,10 @@ applies, so a wrong target brings the game down at startup.
 | `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor` | no |
 | `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | VMR's terrain | no |
 | `CustomVertexFormatMixin`, `TerrainBufferBuilderMixin`, `DeviceManagerMixin` | format, builder, `createLogicalDevice` | no |
+| `VulkanIdleMixin` | `Vulkan.waitIdle`, `Vulkan.cleanUp`: under `QueueLock` | no |
+| `TaskDispatcherFlowMixin`, `SectionGraphUrgencyMixin`, `BuildTaskUrgencyMixin`, `ChunkUploadCountMixin` | finished chunk sections uploaded past the ceiling while they wait, urgent ones first: `TaskDispatcher.getMaxUploadsPerFrame`, `schedule`, `pollTask`, `scheduleSectionUpdate`, `updateSections`, `clearBatchQueue`, `isIdle`; `SectionGraph.schedulePendingRebuilds`; `BuildTask.<init>`; `ChunkFrameDiagnostics.recordUploads` | no |
+| `SpriteContentsUseMixin`, `SpriteInterpolationUseMixin`, `TextureAtlasSpriteUseMixin`, `BakedQuadUseMixin`, `TextureAtlasCycleMixin`, `ModelBakeryUseMixin`, `BlockRendererUseMixin` | animated textures only once used: `SpriteContents.upload`, `InterpolationData.uploadInterpolatedFrame`, the sprite's coordinate getters, `BakedQuad.getVertices` and `getSprite`, `TextureAtlas.cycleAnimationFrames`, `ModelBakery.bakeModels`, VMR's `BlockRenderer.putQuadData` | no |
+| `DhDependencySetupMixin`, `DhMainMixin`, `DhRenderTasksMixin`, `DhRenderListMixin`, `DhClientWorldMixin`, `DhStartMixin`, `DhClientApiMixin` | Distant Horizons, only where `DhSupport.ACTIVE`: `setRenderingApiBindings`, `initializeModCompat`, `runRenderThreadTasks()`, `queueRunningOnRenderThread`, `buildRenderList`, `unloadLevel`, `logIncompatibilityWarnings`, `renderLods` | no |
 
 `@WrapMethod` and `@WrapOperation` need MixinExtras 0.4+, NeoForge 21.1.228 carries 0.5.3 and VMR uses them too.
 
@@ -355,6 +562,12 @@ whenever their target is in the game.
 
 What ran is in Results on Vulkan. Consciously left out or not run:
 
+- `DhStartMixin`, `DistantPlain`, `LodAtlas` and the patched copy of DH: built, not run. The user's decision: they test it in the game themselves.
+- `LodTransfer`, `LodDeviceBuffer`, `QueueLock` and `VulkanIdleMixin`: built, not run, for the same reason.
+- The shader thread of `MeshPrograms` and `PackPipeline.readyPipeline`: built, not run, for the same reason.
+- `AnimatedSprites` and its mixins, the new `PackSettingsScreen` and `ShaderPackScreen`: built, not run, for the same reason.
+- `RenderSampler` and the longer `[pack]` line of `FrameStats`: built, not run, for the same reason.
+- `ChunkFlow` and its four mixins: built, not run, for the same reason.
 - Opal on OpenGL with Create, Mekanism and DH: ran only with Opal and Vectors, one scene. `FlywheelShaderPackMixin` did not run in the game
   and Opal has no `dh_*` programs. The user's decision: Vulkan is enough.
 - A run without VMR after merging into one mod: it last ran as two jars. Now it is verified only statically (`scripts/release.py` makes sure
@@ -390,7 +603,7 @@ Fixed during that check: entity shadows sort by type (fewer batches), take tick 
 ## What is left
 
 1. What is listed in "Not verified at run time".
-2. Possibly: LODs without a pack, `dh_generic`, a Flywheel backend of our own.
+2. Possibly: SSAO and the fade of the near chunks for far terrain with no pack, `dh_generic`, a Flywheel backend of our own.
 
 ## Reference: Iris-Vulkan-Port
 

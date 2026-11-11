@@ -133,6 +133,24 @@ dependencies {
     packTool "org.lwjgl:lwjgl-shaderc:${project.lwjgl_version}:${natives}"
 }
 
+// A copy of Distant Horizons that selects Blaze3D in its own code and calls no OpenGL of its own, for the game with this
+// mod on VulkanMod Reforged (see PatchDistantHorizons). Not part of the normal build; the jar it starts from is the
+// verified one above, and what it writes keeps the file name.
+sourceSets.create('dhPatch')
+
+dependencies {
+    dhPatchImplementation 'org.ow2.asm:asm-tree:9.7'
+}
+
+tasks.register('patchDistantHorizons', JavaExec) {
+    group = 'build'
+    description = 'Writes the patched copy of Distant Horizons to build/libs/distanthorizons.'
+    classpath = sourceSets.dhPatch.runtimeClasspath
+    mainClass = 'dev.opalcompat.dhpatch.PatchDistantHorizons'
+    args distantHorizonsJar.absolutePath,
+            layout.buildDirectory.file("libs/distanthorizons/${distantHorizonsJar.name}").get().asFile.absolutePath
+}
+
 tasks.register('checkPacks', JavaExec) {
     group = 'verification'
     description = 'Translates and compiles every program of the packs in run/shaderpacks.'
