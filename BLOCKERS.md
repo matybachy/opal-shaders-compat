@@ -32,6 +32,7 @@ The right fix belongs with them. Once they make it, the mixin is unnecessary but
 
 - **VMR:** `VTextureSelector.uploadSubTexture` throws an NPE on an upload to a texture with no image, `GlTexture.texSubImage2D` skips it. `VTextureSelectorMixin`.
 - **Every Compat 2.11.56:** `forAllModules` walks the modules without the lock `addModule` holds. `EveryCompatModulesMixin`.
+- **Ponder 1.0.82 and Create 6.0.10:** `StitchedSprite.ALL`, `SpriteShifter.ENTRY_CACHE` and `CTSpriteShifter.ENTRY_CACHE` are plain `HashMap`s filled from mod constructors, which NeoForge runs on several threads. `CreateStitchedSpriteMixin`, `CreateSpriteShifterMixin`, `CreateCtSpriteShifterMixin`.
 - **Distant Horizons 3.3.3 with Chunky 1.4.23:** `ChunkyAccessor` calls `ChunkyProvider.get()` before Chunky exists. `DhChunkyMixin`.
 - **VMR with Distant Horizons:** both draw from the head of `LevelRenderer.renderSectionLayer` and VMR comes first, so DH's deferred water lands after the world's, and with no pack its whole far terrain would land on top of the near chunks. `DhSupport.waterBeforeWorld`, `VkDhBridge.beforeWorldLayer`.
 - **Distant Horizons 3.3.3 at its start:** `logIncompatibilityWarnings` takes any `IIrisAccessor` for Iris, crashes the game on the `BLAZE_3D` engine and forces `OPEN_GL` on `AUTO`. `DhStartMixin`, for this mod's adapter alone.

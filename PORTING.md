@@ -144,6 +144,7 @@ A copy of the 356 jars and configs of the user's instance in `test-instance/stel
 | `Texture is null at index: 0` (report 22.24.34, in a test 18.18.39) | Railways uploads a sprite from the tick of the block atlas (`PhantomSpriteManager.renderTick`), until the load is over the atlas has an id but no image, and `VTextureSelector.uploadSubTexture` throws an NPE. OpenGL and VMR's `GlTexture.texSubImage2D` skip it. | `VTextureSelectorMixin` |
 | `Cannot get config value before config is loaded` (22.17.11, in a test 18.20.19, there without `opalcompat`) | `ConcurrentModificationException` in `EveryCompat.forAllModules`: `addModule` is `synchronized`, walking is not, and VanillaBackport, No Man's Land and Gems Realm add modules from their constructors. NeoForge then loads no configs and the first tick crashes. | `EveryCompatModulesMixin` |
 | `OutOfMemoryError` / hang on a full heap | The set has no FerriteCore, see `BLOCKERS.md`. | Put FerriteCore back in `mods` |
+| `Failed to create mod instance. ModID: createdeco` (`2026-11-11_17-23-37.log`) | `ConcurrentModificationException` from `HashMap.computeIfAbsent` in Ponder's `StitchedSprite.<init>`, reached from Create Deco's `SpriteShifts.<clinit>` through Create's `CTSpriteShifter.getCT` on a `modloading-worker` thread. `StitchedSprite.ALL` (a map of `ArrayList`s), Ponder's `SpriteShifter.ENTRY_CACHE` and Create's `CTSpriteShifter.ENTRY_CACHE` are plain `HashMap`s (`javap` of `ponder-neoforge-1.0.82+mc1.21.1.jar` inside the Create jar, and of `create-1.21.1-6.0.10.jar`), filled from the constructors of every Create addon at once. | `CreateStitchedSpriteMixin`, `CreateSpriteShifterMixin`, `CreateCtSpriteShifterMixin`: every read and write of the three, and the add to a list, under one lock (`compat/CreateSprites`); the stitch walks a copy. Built, not run |
 | `Chunky is not loaded` when creating a world (19.18.02) | DH 3.3.3 binds to Chunky on the first chunk, Chunky comes to exist only in `ServerStartingEvent`, after the first chunks have loaded. | `DhChunkyMixin` |
 
 **Result.** Final jar, FerriteCore, G1, 15 GB: atlas 16384x8192, new world, joined, `status=OK`, no crash. Regression: pack, Create,
@@ -555,7 +556,7 @@ applies, so a wrong target brings the game down at startup.
 `@WrapMethod` and `@WrapOperation` need MixinExtras 0.4+, NeoForge 21.1.228 carries 0.5.3 and VMR uses them too.
 
 The package `compat` has its own config with `required: false` and `@Pseudo`, a change in another mod must not bring it down: `OpalOnVulkanMixin` and
-`VectorsOnVulkanMixin` only with VMR, `OpalImagesMixin`, `OpalImageMixin` and `FlywheelShaderPackMixin` only without it, `EveryCompatModulesMixin` and `DhChunkyMixin`
+`VectorsOnVulkanMixin` only with VMR, `OpalImagesMixin`, `OpalImageMixin` and `FlywheelShaderPackMixin` only without it, `EveryCompatModulesMixin`, `DhChunkyMixin` and the three `Create*` mixins
 whenever their target is in the game.
 
 ## Not verified at run time

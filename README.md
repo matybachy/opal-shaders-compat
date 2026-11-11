@@ -17,7 +17,7 @@ Client-side only. **Alpha:** tested on one GPU (RTX 5060 Ti) and a handful of sh
 - Animates a texture only once something has drawn with it, which spares a large mod set hundreds of uploads twenty times a second. A switch in the Shaders group turns it off.
 - Draws Distant Horizons 3.3.3 LODs through a pack's `dh_*` programs, and with no pack on through DH's own terrain program on Vulkan, with its fog and far fade.
 - Draws Create and Mekanism with the pack. Flywheel falls back to `flywheel:off`, so Create's moving parts go through block entity renderers.
-- Works around crashes in other mods: Steam 'n' Rails uploading textures on VulkanMod Reforged during the load, a random failure in Every Compat at startup, and Distant Horizons with Chunky when a world loads. Distant Horizons also loads its far terrain faster than its own limits would allow here: its threads copy it to the GPU themselves instead of waiting for a frame.
+- Works around crashes in other mods: Steam 'n' Rails uploading textures on VulkanMod Reforged during the load, a random failure in Every Compat at startup, a random failure of Create addons such as Create Deco at startup (Ponder's sprite registry), and Distant Horizons with Chunky when a world loads. Distant Horizons also loads its far terrain faster than its own limits would allow here: its threads copy it to the GPU themselves instead of waiting for a frame.
 
 **Without VulkanMod Reforged** (Opal on OpenGL)
 

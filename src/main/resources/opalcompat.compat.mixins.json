@@ -11,7 +11,10 @@
     "OpalImageMixin",
     "FlywheelShaderPackMixin",
     "EveryCompatModulesMixin",
-    "DhChunkyMixin"
+    "DhChunkyMixin",
+    "CreateStitchedSpriteMixin",
+    "CreateSpriteShifterMixin",
+    "CreateCtSpriteShifterMixin"
   ],
   "injectors": {
     "defaultRequire": 0
