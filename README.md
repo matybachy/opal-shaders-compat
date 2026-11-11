@@ -41,15 +41,13 @@ Optional:
 
 | | Version | Where to get it | Notes |
 |---|---|---|---|
-| Opal Shaders | 1.0.0-alpha.8 or newer | | needs Vectors |
-| Vectors | 1.5.0 or newer | | needs LibLibLib |
-| LibLibLib | 1.1.2 or newer | | needed by Vectors |
+| Opal Shaders | 1.0.0-alpha.8 or newer | [CurseForge](https://www.curseforge.com/minecraft/mc-mods/opals) | needs Vectors |
+| Vectors | 1.5.0 or newer | [CurseForge](https://www.curseforge.com/minecraft/mc-mods/vectors) | needs LibLibLib |
+| LibLibLib | 1.1.2 or newer | [CurseForge](https://www.curseforge.com/minecraft/mc-mods/libliblib) | needed by Vectors |
 | Distant Horizons | exactly 3.3.3 | [Modrinth](https://modrinth.com/mod/distanthorizons) | with other versions the Vulkan bridge stays off, which is untested |
 | FerriteCore | for the loader you use | [Modrinth](https://modrinth.com/mod/ferrite-core) | strongly recommended for large mod sets, see below |
 | Create | 6.0.10 tested | [CurseForge](https://www.curseforge.com/minecraft/mc-mods/create) | drawn with the pack |
 | Mekanism | 10.7.19 tested | [aidancbrady.com](https://aidancbrady.com/mekanism/) | drawn with the pack |
-
-Opal Shaders, Vectors and LibLibLib are found by their names on CurseForge or Modrinth; this README gives no link for them until one is confirmed.
 
 ## Installation
 
