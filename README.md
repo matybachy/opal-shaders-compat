@@ -30,20 +30,26 @@ Since the merge into one mod this OpenGL part has only been checked statically, 
 
 ## Requirements
 
-| | Version |
-|---|---|
-| Minecraft | 1.21.1 |
-| NeoForge | 21.1.x (21.1.259 or newer with Opal) |
-| Java | 21 |
-| VulkanMod Reforged | exactly `0.3.5-ALPHA+1.21.1` for the Vulkan features; the game refuses other versions |
+| | Version | Where to get it |
+|---|---|---|
+| Minecraft | 1.21.1 | |
+| NeoForge | 21.1.x (21.1.259 or newer with Opal) | [neoforged.net](https://neoforged.net/) |
+| Java | 21 | |
+| VulkanMod Reforged | exactly `0.3.5-ALPHA+1.21.1` for the Vulkan features; the game refuses other versions | [GitHub releases](https://github.com/TrulyRin/VulkanMod-Reforged/releases) |
 
 Optional:
 
-| | Version | Notes |
-|---|---|---|
-| Opal Shaders | 1.0.0-alpha.8 or newer | needs Vectors |
-| Vectors | 1.5.0 or newer | needs LibLibLib |
-| Distant Horizons | exactly 3.3.3 | with other versions the Vulkan bridge stays off, which is untested |
+| | Version | Where to get it | Notes |
+|---|---|---|---|
+| Opal Shaders | 1.0.0-alpha.8 or newer | | needs Vectors |
+| Vectors | 1.5.0 or newer | | needs LibLibLib |
+| LibLibLib | 1.1.2 or newer | | needed by Vectors |
+| Distant Horizons | exactly 3.3.3 | [Modrinth](https://modrinth.com/mod/distanthorizons) | with other versions the Vulkan bridge stays off, which is untested |
+| FerriteCore | for the loader you use | [Modrinth](https://modrinth.com/mod/ferrite-core) | strongly recommended for large mod sets, see below |
+| Create | 6.0.10 tested | [CurseForge](https://www.curseforge.com/minecraft/mc-mods/create) | drawn with the pack |
+| Mekanism | 10.7.19 tested | [aidancbrady.com](https://aidancbrady.com/mekanism/) | drawn with the pack |
+
+Opal Shaders, Vectors and LibLibLib are found by their names on CurseForge or Modrinth; this README gives no link for them until one is confirmed.
 
 ## Installation
 
@@ -54,6 +60,43 @@ Download the jar from [Releases](https://github.com/matybachy/opal-shaders-compa
 3. In the game open the video settings and the **Shaders** group on the left. Choose a pack, turn **Shaders** on and press **Apply**.
 
 A pack's settings are saved in `shaderpacks/<pack>.txt`, the same file Iris uses.
+
+### Recommended VulkanMod Reforged settings
+
+- **Chunk Upload Ceiling** (Video Settings, Optimizations): 8 or more. At 1 the world appears a section a frame. Opal Compat raises it on its own while sections wait, but a higher value helps at all times.
+- **Adaptive Chunk Uploads**: on.
+
+## Settings
+
+`config/opalcompat.properties`, written by the game; every key is optional.
+
+| Key | Default | What it does |
+|---|---|---|
+| `shaderPack` | empty | the pack that is drawn; empty is no pack. Set from the Shaders group |
+| `chunkFlow` | `true` | the chunk fixes: faster uploads, sections near the player first, sections built where VulkanMod Reforged would leave them unbuilt, 32-bit indices for dense sections |
+| `animateUsedTexturesOnly` | `true` | animated textures update only once something has drawn them. Also a switch in the Shaders group |
+| `frameSampler` | `true` | the `[where]` lines in the log, see below |
+
+## Reporting problems
+
+Send `logs/latest.log` (or `logs/debug.log`) from a session in which the problem happened, and say what you did and where. The log has lines of its own that say what Opal Compat did:
+
+| Line | Every | What it says |
+|---|---|---|
+| `[pack] … frames in 10 s` | 10 s | frame times, the slowest second, mesh draws, draws waiting for shaders |
+| `[where]` | 30 s | where the render thread spends its time: part of the frame, mods, methods |
+| `[chunks] 10 s: …` | 10 s | chunk sections uploaded, the build queue, sections built that VulkanMod Reforged held back |
+| `[chunks] chunk …`, `[chunks] the … layer …` | first ten | sections built as vanilla would build them, layers drawn with 32-bit indices |
+| `[dh]` | 10 s | far terrain uploaded and drawn |
+| `[textures]` | 60 s | animated texture frames uploaded and left alone |
+
+## Troubleshooting
+
+- **Blocks are there but invisible** (Jade names them, their outline shows): fixed in 0.5.0. A dense section of a base passed VulkanMod Reforged's limit of 16384 quads a layer, or a section was never built. If it still happens, send the log; the `[chunks]` lines say which.
+- **The world appears slowly after joining:** raise the Chunk Upload Ceiling, see above. The first seconds after joining are also slow while the shader pack loads.
+- **Low frame rate:** the `[pack]` and `[where]` lines say whether it is the render thread and whose code it is running.
+- **A shader pack fails to load:** the error is shown in full on the Shader Packs screen and can be copied from there.
+- **The game crashes at startup in another mod:** see [BLOCKERS.md](BLOCKERS.md) for the crashes Opal Compat works around and the mods that cannot be made to work.
 
 ### Large mod sets
 
@@ -87,10 +130,6 @@ On Vulkan with NeoForge 21.1.265. The full list and the evidence are in [PORTING
 - The first time a pack or its settings are used, the game stops for up to a second whenever a new program is needed, for example at the first mob. The result is kept in `config/opalcompat_pipeline_cache.bin`, so later runs do not stop.
 
 More in [PORTING.md](PORTING.md#known-problems-and-limitations).
-
-## Reporting low frame rates
-
-While a shader pack draws a world, `logs/latest.log` says every ten seconds how the frames went (`[pack] ... frames in 10 s`) and every thirty seconds where the render thread spent them (`[where]`): which part of the frame, which mods, which methods, for all frames and apart for the slow ones. Send that log with a report. The sampling costs a fraction of a percent; `frameSampler=false` in `config/opalcompat.properties` turns it off.
 
 ## Building
 
