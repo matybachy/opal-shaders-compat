@@ -1,7 +1,7 @@
-// VitrailVK: replaces Vitrail's SodiumVertex (common/src/main/java/dev/vitrail/glsl/SodiumVertex.java,
+// OpalCompat: replaces Vitrail's SodiumVertex (common/src/main/java/dev/vitrail/glsl/SodiumVertex.java,
 // commit 7a3cdcb). The class keeps its name and public interface so the translator that calls it is
 // unchanged, but the mesh it decodes is VulkanMod Reforged's compressed terrain format extended by
-// VitrailVK (dev.vitrailvk.terrain.TerrainFormat), not Sodium's. Written for VitrailVK; the shape of
+// OpalCompat (dev.opalcompat.terrain.TerrainFormat), not Sodium's. Written for OpalCompat; the shape of
 // the interface is Vitrail's. LGPL-3.0, see NOTICE and NOTICE-vitrail.
 package dev.vitrail.glsl;
 
@@ -14,14 +14,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * What a VulkanMod Reforged chunk mesh carries once VitrailVK extends it, and how the names a pack
+ * What a VulkanMod Reforged chunk mesh carries once OpalCompat extends it, and how the names a pack
  * reads are made out of it.
  * <p>
  * Forty bytes a vertex. VulkanMod's own twenty: {@code a_Position} four shorts, x y z in 1/2048 of a
  * block relative to the chunk area (minus four blocks, which the region offset puts back) and w the
  * light, block light in the low byte and sky light in the high one, each 0..240; {@code a_Color} the
  * tint with the ambient occlusion multiplied in; {@code a_TexCoord} the atlas coordinate in 1/32768;
- * four bytes VulkanMod declares and never writes. VitrailVK's twenty: {@code a_BlockId} the
+ * four bytes VulkanMod declares and never writes. OpalCompat's twenty: {@code a_BlockId} the
  * block.properties id (-1 for none), {@code a_MidTexCoord} the middle of the sprite in 1/32768,
  * {@code a_Normal} and {@code a_Tangent} as signed bytes (tangent w the handedness) and
  * {@code a_MidBlock} the offset to the middle of the block in 1/64 with the light emission in w.

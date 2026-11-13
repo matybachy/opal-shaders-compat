@@ -26,4 +26,4 @@ echo "--- validation: $(grep -c 'Validation Error' "$VLOG" 2>/dev/null) errors, 
 # Known VulkanMod Reforged baseline (see PORTING.md): vkQueueSubmit-pSignalSemaphores-00067, vkDestroyDevice-device-05137
 grep -oE 'VUID-[A-Za-z0-9_-]+' "$VLOG" 2>/dev/null | sort | uniq -c | sort -rn | head -15
 echo "--- log errors"
-grep -E '\[[^]]*/(ERROR|FATAL)\]|Exception|VitrailVK' "$OUT/latest.log" 2>/dev/null | grep -v 'mixin/\]: Error loading' | cut -c1-400 | head -60
+grep -E '\[[^]]*/(ERROR|FATAL)\]|Exception|OpalCompat' "$OUT/latest.log" 2>/dev/null | grep -v 'mixin/\]: Error loading' | cut -c1-400 | head -60

@@ -1,8 +1,8 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/render/BlockStateIds.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
-// VitrailVK: net.minecraft.resources.Identifier (26.x) is ResourceLocation in 1.21.1.
-// VitrailVK: levelExtractor and the registry calls follow the 1.21.1 API.
+// Unchanged unless marked with a "OpalCompat:" comment.
+// OpalCompat: net.minecraft.resources.Identifier (26.x) is ResourceLocation in 1.21.1.
+// OpalCompat: levelExtractor and the registry calls follow the 1.21.1 API.
 package dev.vitrail.render;
 
 import dev.vitrail.pack.id.BlockIds;
@@ -85,6 +85,7 @@ public final class BlockStateIds {
 	 * written against that, building it as {@code a_BlockId & 1u}.
 	 */
 	private static final int FLUID = 1;
+	private static final int LOGGED_NAMES = 20;
 
 	private static volatile Object2IntMap<BlockState> table = empty();
 
@@ -152,8 +153,11 @@ public final class BlockStateIds {
 		// Named rather than counted. Every one of them is a block another mod was meant to add, or a
 		// name the pack spelled wrong, and both read as "the pack does nothing for that block".
 		if (!unknown.isEmpty()) {
-			Vitrail.logger().info("{} name nothing this game has and are dropped: {}", unknown.size(),
-					unknown);
+			// OpalCompat: a pack that knows many mods names tens of thousands of these, one line of 1.8 MB
+			// in a real log. A sample says what this is; the whole list goes to the debug log.
+			Vitrail.logger().info("{} name nothing this game has and are dropped, among them: {}", unknown.size(),
+					unknown.stream().limit(LOGGED_NAMES).toList());
+			Vitrail.logger().debug("All {} of them: {}", unknown.size(), unknown);
 		}
 
 		// Said out loud, where this was a debug line nobody turns on. A filter naming a property the

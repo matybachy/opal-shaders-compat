@@ -1,7 +1,7 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/pack/source/ShaderProperties.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
-// VitrailVK: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
+// Unchanged unless marked with a "OpalCompat:" comment.
+// OpalCompat: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
 package dev.vitrail.pack.source;
 
 import dev.vitrail.pack.option.OptionIndex;
@@ -1611,6 +1611,24 @@ public final class ShaderProperties {
 		return directives;
 	}
 
+	// OpalCompat: Iris's indirect.<stem> = <buffer> <byte offset>, by which a compute takes its counts from a buffer.
+	public Map<String, long[]> indirectPointers(Map<String, String> defines) {
+		Map<String, long[]> pointers = new LinkedHashMap<>();
+		for (Matcher line : live(Pattern.compile("^\\s*indirect\\.([^=\\s]+)\\s*=\\s*(\\d+)\\s+(\\d+)\\s*$"), defines)) {
+			pointers.put(line.group(1), new long[] {Long.parseLong(line.group(2)), Long.parseLong(line.group(3))});
+		}
+		return pointers;
+	}
+
+	// OpalCompat: preserve live scale directives for the Vulkan fullscreen viewport.
+	public Map<String, String> viewportScales(Map<String, String> defines) {
+		Map<String, String> scales = new LinkedHashMap<>();
+		for (Matcher line : live(Pattern.compile("^\\s*scale\\.([^=\\s]+)\\s*=\\s*(.*)$"), defines)) {
+			scales.put(line.group(1), line.group(2).trim());
+		}
+		return scales;
+	}
+
 	/**
 	 * The size a pack asks a colour target to be, by the name it wrote, raw, the last live line
 	 * for a name winning. The two tokens are often settings rather than numbers, so reading them
@@ -1620,15 +1638,6 @@ public final class ShaderProperties {
 	 * the size of two targets four times in the four arms of one setting, so a flat read hands
 	 * every choice the size of the last arm.
 	 */
-	// VitrailVK: preserve live scale directives for the Vulkan fullscreen viewport.
-	public Map<String, String> viewportScales(Map<String, String> defines) {
-		Map<String, String> scales = new LinkedHashMap<>();
-		for (Matcher line : live(Pattern.compile("^\\s*scale\\.([^=\\s]+)\\s*=\\s*(.*)$"), defines)) {
-			scales.put(line.group(1), line.group(2).trim());
-		}
-		return scales;
-	}
-
 	public Map<String, String> sizeBuffers(Map<String, String> defines) {
 		Map<String, String> sizes = new LinkedHashMap<>();
 		for (Matcher line : live(SIZE_BUFFER, defines)) {

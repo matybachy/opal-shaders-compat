@@ -1,6 +1,6 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/pack/model/package-info.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
+// Unchanged unless marked with a "OpalCompat:" comment.
 /**
  * The words a pack is read in: target names, formats and sizes, the shapes of its images and
  * buffers, the stages and names of its programs and the fallback tree between them.

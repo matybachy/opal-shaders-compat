@@ -1,4 +1,4 @@
-// VitrailVK: Vitrail's FrameState (common/src/main/java/dev/vitrail/render/FrameState.java, commit 7a3cdcb)
+// OpalCompat: Vitrail's FrameState (common/src/main/java/dev/vitrail/render/FrameState.java, commit 7a3cdcb)
 // ported to Minecraft 1.21.1. Same fields, same published conventions; each read of the game goes
 // through the 1.21.1 API instead of 26.x's render state objects and environment attributes. Where 1.21.1
 // has no counterpart (end flash, texture filtering options, chunk fade) the value is what Iris 1.21.1
@@ -13,7 +13,7 @@ import dev.vitrail.pack.model.RenderStage;
 import dev.vitrail.pack.target.PackDirectives;
 import dev.vitrail.uniform.WorldState;
 import dev.vitrail.uniform.values.FrameSmoothed;
-import dev.vitrailvk.render.LevelCapture;
+import dev.opalcompat.render.LevelCapture;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -86,6 +86,8 @@ public final class FrameState implements WorldState {
 	private float glintAlpha = 1.0F;
 	private float viewWidth;
 	private float viewHeight;
+	private int drawnWidth;
+	private int drawnHeight;
 	private long worldTime;
 	private long worldDay;
 	private int moonPhase;
@@ -193,9 +195,9 @@ public final class FrameState implements WorldState {
 		this.view.passModelView(matrix, bob);
 	}
 
-	/** VitrailVK: takes the forward 0..1 matrix VulkanMod Reforged draws with. */
+	/** OpalCompat: takes the OpenGL form matrix the game and the shadow pass hand out on this loader. */
 	public void passProjection(Matrix4fc matrix) {
-		this.view.passProjection(LevelCapture.forwardToReversed(matrix, new Matrix4f()));
+		this.view.passProjection(LevelCapture.glToReversed(matrix, new Matrix4f()));
 	}
 
 	public void passColour(Vector4fc colour) {
@@ -211,6 +213,18 @@ public final class FrameState implements WorldState {
 	}
 
 	@SuppressWarnings("ReferenceEquality")
+	/**
+	 * The size the pack's images are drawn at this frame, for {@code viewWidth} and {@code viewHeight}; zero for the
+	 * game's main target. They differ where the engine draws the world smaller than the window (VulkanMod Reforged's
+	 * Render Scale), and packs divide {@code gl_FragCoord} by these two to find a pixel in an image of that size:
+	 * Complementary's {@code dh_water} discards its fragment where {@code depthtex0} at that place holds the world, and
+	 * with the window's size there it looked a third of the way in at 33 % and threw the far water away.
+	 */
+	public void drawnSize(int width, int height) {
+		this.drawnWidth = width;
+		this.drawnHeight = height;
+	}
+
 	public void advance() {
 		advanceClock();
 		Minecraft minecraft = Minecraft.getInstance();
@@ -228,10 +242,15 @@ public final class FrameState implements WorldState {
 		this.partialTick = minecraft.getTimer().getGameTimeDeltaPartialTick(false);
 		this.gameTime = level.getGameTime();
 		this.glintAlpha = minecraft.options.glintStrength().get().floatValue();
-		RenderTarget main = minecraft.getMainRenderTarget();
-		if (main != null) {
-			this.viewWidth = main.width;
-			this.viewHeight = main.height;
+		if (this.drawnWidth > 0 && this.drawnHeight > 0) {
+			this.viewWidth = this.drawnWidth;
+			this.viewHeight = this.drawnHeight;
+		} else {
+			RenderTarget main = minecraft.getMainRenderTarget();
+			if (main != null) {
+				this.viewWidth = main.width;
+				this.viewHeight = main.height;
+			}
 		}
 		this.shift.advance(camera.getPosition());
 		readWorld(level, camera);
@@ -277,13 +296,21 @@ public final class FrameState implements WorldState {
 
 	private void advanceView(Minecraft minecraft) {
 		int renderDistance = minecraft.options.getEffectiveRenderDistance();
-		// VitrailVK: 1.21.1 folds the bob into the projection the level is drawn with, as Iris 1.21.1
-		// publishes it, so no bob is split out. ViewMatrices expects a reversed Z projection.
-		LevelCapture.forwardToReversed(LevelCapture.projection(), this.reversedProjection);
-		this.view.advance(LevelCapture.modelView(), IDENTITY, this.reversedProjection,
+		// OpalCompat: the game's projection with the bob taken out, and the bob on the model view, as
+		// Iris has it too (MixinModelViewBobbing). ViewMatrices expects a reversed Z projection.
+		LevelCapture.glToReversed(LevelCapture.cleanProjection(), this.reversedProjection);
+		this.view.advance(LevelCapture.modelView(), LevelCapture.bob(), this.reversedProjection,
 				renderDistance * 16.0F, renderDistance);
-		this.view.advanceDistant(ViewMatrices.FALLBACK_PLANE, ViewMatrices.FALLBACK_PLANE, -1);
-		this.view.advanceDistantVolume(0.0F, 0.0F);
+		// OpalCompat: the row of the volume Distant Horizons is drawn in, in this reversed spelling.
+		float[] distant = dev.opalcompat.dh.DhSupport.planes();
+		if (distant != null) {
+			float near = distant[0], far = distant[1];
+			this.view.advanceDistant(near, far, (int) distant[2]);
+			this.view.advanceDistantVolume(near / (far - near), near * far / (far - near));
+		} else {
+			this.view.advanceDistant(ViewMatrices.FALLBACK_PLANE, ViewMatrices.FALLBACK_PLANE, -1);
+			this.view.advanceDistantVolume(0.0F, 0.0F);
+		}
 		float shadowAngle = sunAngle(isDay()) / 360.0F;
 		boolean drewLastFrame = ShadowAmortisation.beginFrame(this.shift.unshifted(), shadowAngle, false);
 		this.view.advanceShadow(shadowAngle, this.directives.sunPathRotation(),
@@ -308,7 +335,7 @@ public final class FrameState implements WorldState {
 
 	private void readWorld(ClientLevel level, Camera camera) {
 		float pt = this.partialTick;
-		// VitrailVK: 1.21.1 has one celestial angle; the moon sits opposite the sun, as in Iris 1.21.1.
+		// OpalCompat: 1.21.1 has one celestial angle; the moon sits opposite the sun, as in Iris 1.21.1.
 		this.sunAngleDegrees = level.getTimeOfDay(pt) * 360.0F;
 		this.moonAngleDegrees = this.sunAngleDegrees + 180.0F;
 		this.moonPhase = level.getMoonPhase();
@@ -344,7 +371,7 @@ public final class FrameState implements WorldState {
 		return 2;
 	}
 
-	/** VitrailVK: 1.21.1 keeps the frame's fog in RenderSystem, set by FogRenderer during the level. */
+	/** OpalCompat: 1.21.1 keeps the frame's fog in RenderSystem, set by FogRenderer during the level. */
 	private void readFog() {
 		float[] colour = RenderSystem.getShaderFogColor();
 		this.fogColor.set(colour[0], colour[1], colour[2], colour[3]);
@@ -450,7 +477,7 @@ public final class FrameState implements WorldState {
 		this.onGround = player.onGround();
 		this.elytraFlying = player.isFallFlying();
 		this.riding = player.isPassenger();
-		// VitrailVK: 1.21.1 has no isInShallowWater; in water with the eyes above it.
+		// OpalCompat: 1.21.1 has no isInShallowWater; in water with the eyes above it.
 		this.feetInWater = player.isInWater() && !player.isUnderWater();
 		this.swimming = player.isSwimming();
 		Entity vehicle = player.getVehicle();
@@ -536,7 +563,7 @@ public final class FrameState implements WorldState {
 			return level.getBlockState(block).getMenuProvider(level, block) != null;
 		}
 		ItemStack held = player.getMainHandItem();
-		// VitrailVK: 1.21.1 offers only the place-on test as a public method.
+		// OpalCompat: 1.21.1 offers only the place-on test as a public method.
 		return !held.isEmpty() && held.canPlaceOnBlockInAdventureMode(new BlockInWorld(level, block, false));
 	}
 
@@ -580,7 +607,7 @@ public final class FrameState implements WorldState {
 		if (stack == null) {
 			return NameIds.NONE;
 		}
-		// VitrailVK: 1.21.1 has no item_model component; the item's registry name is the id.
+		// OpalCompat: 1.21.1 has no item_model component; the item's registry name is the id.
 		return PackNameIds.item(BuiltInRegistries.ITEM.getKey(stack.getItem()));
 	}
 
@@ -609,16 +636,16 @@ public final class FrameState implements WorldState {
 			case RAIN -> 1;
 			case SNOW -> 2;
 		};
-		// VitrailVK: NeoForge exposes the climate settings, so no accessor is needed for the downfall.
+		// OpalCompat: NeoForge exposes the climate settings, so no accessor is needed for the downfall.
 		this.rainfall = holder.value().modifiableBiomeInfo().get().climateSettings().downfall();
 		this.temperature = holder.value().getBaseTemperature();
 	}
 
 	private void readAtlas(Minecraft minecraft) {
 		AbstractTexture atlas = minecraft.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
-		if (atlas instanceof dev.vitrailvk.mixin.TextureAtlasAccessor sized) {
-			this.atlasWidth = sized.vitrailvk$width();
-			this.atlasHeight = sized.vitrailvk$height();
+		if (atlas instanceof dev.opalcompat.mixin.TextureAtlasAccessor sized) {
+			this.atlasWidth = sized.opalcompat$width();
+			this.atlasHeight = sized.opalcompat$height();
 		}
 	}
 

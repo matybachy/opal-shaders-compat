@@ -1,5 +1,5 @@
-// VitrailVK: stand-in for Vitrail's HandDraw, of which only drawing() is read by the code taken from
-// Vitrail (CapturedProjection). The VitrailVK backend sets it around its own hand pass. LGPL-3.0.
+// OpalCompat: stand-in for Vitrail's HandDraw, of which only drawing() is read by the code taken from
+// Vitrail (CapturedProjection). The OpalCompat backend sets it around its own hand pass. LGPL-3.0.
 package dev.vitrail.render;
 
 /** Whether the held item / hand is being drawn right now. */

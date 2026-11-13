@@ -1,8 +1,8 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/render/BiomeClassifier.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
-// VitrailVK: net.minecraft.resources.Identifier (26.x) is ResourceLocation in 1.21.1.
-// VitrailVK: ResourceKey.identifier() (26.x) is location() in 1.21.1.
+// Unchanged unless marked with a "OpalCompat:" comment.
+// OpalCompat: net.minecraft.resources.Identifier (26.x) is ResourceLocation in 1.21.1.
+// OpalCompat: ResourceKey.identifier() (26.x) is location() in 1.21.1.
 package dev.vitrail.render;
 
 import dev.vitrail.uniform.BiomeCategory;

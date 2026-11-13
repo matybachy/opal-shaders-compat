@@ -1,7 +1,7 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/pack/target/TargetPlan.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
-// VitrailVK: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
+// Unchanged unless marked with a "OpalCompat:" comment.
+// OpalCompat: unnamed variables (_) renamed to unusedN, Java 21 has no unnamed variables.
 package dev.vitrail.pack.target;
 
 import dev.vitrail.pack.model.TargetFormat;
@@ -1373,7 +1373,7 @@ public final class TargetPlan {
 		}
 
 		if (!draft.shadowComposites.isEmpty()) {
-			// VitrailVK: the renderer executes these on its independent shadow target schedule.
+			// OpalCompat: the renderer executes these on its independent shadow target schedule.
 			notes.add("shadow composites handled by the separate shadow stage: "
 					+ draft.shadowComposites);
 		}

@@ -1,6 +1,6 @@
 // Taken from Vitrail (https://github.com/avpbynf/Vitrail-Shaders), commit 7a3cdcb,
 // common/src/main/java/dev/vitrail/glsl/LinesVertex.java. LGPL-3.0, see NOTICE and NOTICE-vitrail.
-// Unchanged unless marked with a "VitrailVK:" comment.
+// Unchanged unless marked with a "OpalCompat:" comment.
 package dev.vitrail.glsl;
 
 import java.util.ArrayList;
