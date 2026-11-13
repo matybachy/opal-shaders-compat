@@ -86,6 +86,8 @@ public final class FrameState implements WorldState {
 	private float glintAlpha = 1.0F;
 	private float viewWidth;
 	private float viewHeight;
+	private int drawnWidth;
+	private int drawnHeight;
 	private long worldTime;
 	private long worldDay;
 	private int moonPhase;
@@ -211,6 +213,18 @@ public final class FrameState implements WorldState {
 	}
 
 	@SuppressWarnings("ReferenceEquality")
+	/**
+	 * The size the pack's images are drawn at this frame, for {@code viewWidth} and {@code viewHeight}; zero for the
+	 * game's main target. They differ where the engine draws the world smaller than the window (VulkanMod Reforged's
+	 * Render Scale), and packs divide {@code gl_FragCoord} by these two to find a pixel in an image of that size:
+	 * Complementary's {@code dh_water} discards its fragment where {@code depthtex0} at that place holds the world, and
+	 * with the window's size there it looked a third of the way in at 33 % and threw the far water away.
+	 */
+	public void drawnSize(int width, int height) {
+		this.drawnWidth = width;
+		this.drawnHeight = height;
+	}
+
 	public void advance() {
 		advanceClock();
 		Minecraft minecraft = Minecraft.getInstance();
@@ -228,10 +242,15 @@ public final class FrameState implements WorldState {
 		this.partialTick = minecraft.getTimer().getGameTimeDeltaPartialTick(false);
 		this.gameTime = level.getGameTime();
 		this.glintAlpha = minecraft.options.glintStrength().get().floatValue();
-		RenderTarget main = minecraft.getMainRenderTarget();
-		if (main != null) {
-			this.viewWidth = main.width;
-			this.viewHeight = main.height;
+		if (this.drawnWidth > 0 && this.drawnHeight > 0) {
+			this.viewWidth = this.drawnWidth;
+			this.viewHeight = this.drawnHeight;
+		} else {
+			RenderTarget main = minecraft.getMainRenderTarget();
+			if (main != null) {
+				this.viewWidth = main.width;
+				this.viewHeight = main.height;
+			}
 		}
 		this.shift.advance(camera.getPosition());
 		readWorld(level, camera);

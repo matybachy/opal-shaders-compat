@@ -94,6 +94,7 @@ Send `logs/latest.log` (or `logs/debug.log`) from a session in which the problem
 ## Troubleshooting
 
 - **Blocks are there but invisible** (Jade names them, their outline shows): fixed in 0.5.0. A dense section of a base passed VulkanMod Reforged's limit of 16384 quads a layer, or a section was never built. If it still happens, send the log; the `[chunks]` lines say which.
+- **Far water of Distant Horizons missing, or other screen-space effects of a pack in the wrong place, with VulkanMod Reforged's Render Scale below 100 %**: fixed in 0.6.0. `viewWidth` and `viewHeight` were the window's size while the pack drew at the Render Scale, so Complementary's `dh_water` looked for the world's depth in the wrong place and discarded the water.
 - **The world appears slowly after joining:** raise the Chunk Upload Ceiling, see above. The first seconds after joining are also slow while the shader pack loads.
 - **Low frame rate:** the `[pack]` and `[where]` lines say whether it is the render thread and whose code it is running.
 - **A shader pack fails to load:** the error is shown in full on the Shader Packs screen and can be copied from there.

@@ -679,6 +679,11 @@ public final class PackValues {
 	 * {@code smooth()} in a pack's expression integrates here, so calling it twice makes every
 	 * smoothed value in the pack fade at twice the speed with nothing on screen to say so.
 	 */
+	/** The size the pack draws at this frame, ahead of {@link #advance}; see {@code FrameState.drawnSize}. */
+	public void drawnSize(int width, int height) {
+		this.state.drawnSize(width, height);
+	}
+
 	public void advance() {
 		this.state.advance();
 		this.customs.update(this.state, this.state.frameTime());

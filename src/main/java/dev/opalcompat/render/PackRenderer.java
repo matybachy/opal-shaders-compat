@@ -479,6 +479,10 @@ public final class PackRenderer implements AutoCloseable {
 		ensureLoaded();
 		DhSupport.frame(active != null);
 		if (active != null) {
+			// What the pack draws into is VulkanMod Reforged's main pass, at its Render Scale; the game's main target
+			// keeps the window's size. viewWidth and viewHeight have to be the first.
+			VulkanImage screen = screen();
+			active.values.drawnSize(screen != null ? screen.width : 0, screen != null ? screen.height : 0);
 			active.values.advance();
 			active.frameOpen = false;
 		}
