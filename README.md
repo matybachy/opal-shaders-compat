@@ -16,6 +16,7 @@ Client-side only. **Alpha:** tested on one GPU (RTX 5060 Ti) and a handful of sh
 - Uploads finished chunk sections as fast as VulkanMod Reforged's own frame budget allows while they wait, whatever its "Chunk Upload Ceiling" says, and builds and uploads the sections near the player and those they change first.
 - Draws every block of a chunk section however many it has: VulkanMod Reforged's terrain indices stop at 16384 quads a layer, past which a dense base shows only part of its blocks.
 - Builds a chunk section as soon as vanilla would, where VulkanMod Reforged would leave it unbuilt (blocks that are there and invisible, often where the player joins), and schedules more sections a frame while the world loads after joining.
+- Takes work off the render thread that changed nothing on screen: VulkanMod Reforged looked up its GUI state in a thread-local at every batch end and copied a whole animation strip to upload one frame of it; this mod wrote a new descriptor set for every draw that bound the same things and began a render pass for every entity, block entity and particle batch, which now share one while they come in a row. `leanFrame=false` turns these off.
 - Animates a texture only once something has drawn with it, which spares a large mod set hundreds of uploads twenty times a second. A switch in the Shaders group turns it off.
 - Draws Distant Horizons 3.3.3 LODs through a pack's `dh_*` programs, and with no pack on through DH's own terrain program on Vulkan, with its fog and far fade.
 - Draws Create and Mekanism with the pack. Flywheel falls back to `flywheel:off`, so Create's moving parts go through block entity renderers.
@@ -74,6 +75,7 @@ A pack's settings are saved in `shaderpacks/<pack>.txt`, the same file Iris uses
 | `chunkFlow` | `true` | the chunk fixes: faster uploads, sections near the player first, sections built where VulkanMod Reforged would leave them unbuilt, 32-bit indices for dense sections |
 | `animateUsedTexturesOnly` | `true` | animated textures update only once something has drawn them. Also a switch in the Shaders group |
 | `frameSampler` | `true` | the `[where]` lines in the log, see below |
+| `leanFrame` | `true` | the render thread savings: GUI state lookups answered from a field, only the rows an upload reads copied, descriptor sets shared between mesh draws, mesh draws in a row recorded in one render pass. Set it to `false` if something is drawn wrongly, to see whether it is one of these |
 
 ## Reporting problems
 
@@ -87,6 +89,7 @@ Send `logs/latest.log` (or `logs/debug.log`) from a session in which the problem
 | `[chunks] chunk …`, `[chunks] the … layer …` | first ten | sections built as vanilla would build them, layers drawn with 32-bit indices |
 | `[dh]` | 10 s | far terrain uploaded and drawn |
 | `[textures]` | 60 s | animated texture frames uploaded and left alone |
+| `[lean]` | 10 s | what the render thread savings came to in a frame, and how long submitting and presenting a frame took |
 
 ## Troubleshooting
 

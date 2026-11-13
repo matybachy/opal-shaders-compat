@@ -181,6 +181,7 @@ final class PackPipeline implements AutoCloseable {
 	final Kind kind;
 	final ProgramTranslator.TranslatedProgram program;
 	final List<Slot> slots;
+	private Boolean touchesStorage;
 	private final boolean readsDerived;
 	private final Map<ProgramStage, Long> modules = new LinkedHashMap<>();
 	private final Map<String, Integer> vertexInputs = new HashMap<>();
@@ -354,6 +355,15 @@ final class PackPipeline implements AutoCloseable {
 
 	long layout() {
 		return this.layout;
+	}
+
+	/** Whether a set of this pipeline binds a storage image or buffer. Render thread. */
+	boolean touchesStorage() {
+		if (this.touchesStorage == null) {
+			this.touchesStorage = this.slots.stream()
+					.anyMatch(slot -> slot.type() == SpirvModule.STORAGE_IMAGE || slot.type() == SpirvModule.STORAGE_BUFFER);
+		}
+		return this.touchesStorage;
 	}
 
 	long compute() {

@@ -43,6 +43,7 @@ import dev.opalcompat.mixin.RendererAccessor;
 import dev.opalcompat.mixin.VboAccessor;
 import dev.opalcompat.mixin.WorldRendererAccessor;
 import dev.opalcompat.pack.ShaderPacks;
+import dev.opalcompat.perf.LeanFrame;
 import dev.opalcompat.terrain.TerrainFormat;
 import dev.opalcompat.vk.HostBuffer;
 import dev.opalcompat.vk.StorageBuffer;
@@ -111,6 +112,7 @@ import java.nio.ByteOrder;
 import java.nio.LongBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -229,6 +231,19 @@ public final class PackRenderer implements AutoCloseable {
 	private int framePool;
 	private final Map<GlobalsKey, FrameArena.Slice> drawGlobals = new HashMap<>();
 	private final Map<DrawKey, FrameArena.Slice> drawTransforms = new HashMap<>();
+	/** The sets the mesh draws of this frame wrote, by what they hold: a draw whose set would hold the same binds that one. */
+	private final Map<SetContents, Long> meshSets = new HashMap<>();
+	private final SetContents setProbe = new SetContents();
+	/** A block of noughts for a uniform block this mod knows nothing of, one for all the draws of a frame. */
+	private FrameArena.Slice zeroBlock;
+	/** Mesh draws that go into the same targets, waiting to be recorded in one pass: {@link #flushMeshes}. */
+	private final List<QueuedMesh> meshQueue = new ArrayList<>();
+	/** The images the waiting draws sample, each once: put into a layout to be read before their pass begins. */
+	private final List<VulkanImage> queueSampled = new ArrayList<>();
+	private List<VulkanImage> queueOutputs;
+	private boolean queueShadow;
+	/** While a draw is being queued: where {@link #describe} notes the images it samples, their layouts left for the flush. */
+	private List<VulkanImage> sampledLater;
 	private boolean announced;
 
 	private PackRenderer(Path packPath, String dimension) throws Exception {
@@ -573,6 +588,7 @@ public final class PackRenderer implements AutoCloseable {
 	public static void renderTranslucentHand(net.minecraft.client.Camera camera, net.minecraft.client.renderer.GameRenderer game, float tick) {
 		if (!drawing() || !solidHandIssued) return;
 		try {
+			active.flushMeshes();
 			Renderer renderer = Renderer.getInstance();
 			VkCommandBuffer cmd = Renderer.getCommandBuffer();
 			try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
@@ -751,6 +767,7 @@ public final class PackRenderer implements AutoCloseable {
 	/** Once per frame, before the pack's first draw: size, descriptors, clears, begin. */
 	private void openFrame(VkCommandBuffer cmd, MemoryStack stack) {
 		if (this.frameOpen) return;
+		dropMeshes();
 		this.frameOpen = true;
 		this.deferredDone = false;
 		this.shadowDone = false;
@@ -790,6 +807,8 @@ public final class PackRenderer implements AutoCloseable {
 		}
 		this.drawGlobals.clear();
 		this.drawTransforms.clear();
+		this.meshSets.clear();
+		this.zeroBlock = null;
 
 		// Iris's order: images, the light's computes, the maps, then the targets, which is what those computes
 		// may read of the frame before. Unless there is none yet: the first time they are cleared ahead of them.
@@ -905,6 +924,7 @@ public final class PackRenderer implements AutoCloseable {
 	private void copyPreHandDepth() {
 		if (this.preHandDepthCopied) return;
 		this.preHandDepthCopied = true;
+		flushMeshes();
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
@@ -928,6 +948,7 @@ public final class PackRenderer implements AutoCloseable {
 		Optional<ChainPlan.Pass> plan = this.chain.chain().geometry(pass);
 		if (pipeline == null || loaded == null || plan.isEmpty()) return false;
 
+		flushMeshes();
 		if (pass == TerrainPass.TRANSLUCENT) DhSupport.waterBeforeWorld();
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
@@ -1118,7 +1139,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (planned == DROPPED) return true;
 		MeshDraw draw = MeshDraw.immediate(this.meshArena, state, vertices, indices, ids,
 				planned.program().pipeline().readsDerived(), RenderSystem.getShaderLineWidth());
-		if (draw != null) submitMesh(planned, draw);
+		if (draw != null) submitMesh(planned, draw, true);
 		return true;
 	}
 
@@ -1145,7 +1166,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (whole == null) return true;
 		for (int i = 0; i < runs.size(); i++) {
 			if (plans.get(i) == DROPPED) continue;
-			submitMesh(plans.get(i), whole.withIndices(this.meshArena, runs.get(i).indices(), runs.get(i).count()));
+			submitMesh(plans.get(i), whole.withIndices(this.meshArena, runs.get(i).indices(), runs.get(i).count()), true);
 		}
 		return true;
 	}
@@ -1159,11 +1180,15 @@ public final class PackRenderer implements AutoCloseable {
 		int count = indices != null ? access.opalcompat$indexCount()
 				: access.opalcompat$nativeCountSelected() ? access.opalcompat$nativeIndexCount() : access.opalcompat$vertexCount();
 		submitMesh(planned, MeshDraw.stored(this.meshArena, vertices.getId(), vertices.getOffset(), indices, count,
-				RenderSystem.getShaderLineWidth()));
+				RenderSystem.getShaderLineWidth()), false);
 		return true;
 	}
 
-	private void submitMesh(PlannedMesh planned, MeshDraw draw) {
+	/**
+	 * @param together the mesh is this mod's copy, in this frame's memory, so that it may wait for the draws after it
+	 *                 and be recorded with them. A {@code VBO} is read where it lies and is drawn at once, as before.
+	 */
+	private void submitMesh(PlannedMesh planned, MeshDraw draw, boolean together) {
 		MeshPrograms.Program program = planned.program();
 		PackPipeline pipeline = program.pipeline();
 		List<VulkanImage> outputs = planned.outputs();
@@ -1178,13 +1203,23 @@ public final class PackRenderer implements AutoCloseable {
 			return;
 		}
 		FrameStats.mesh();
+		LeanFrame.meshDraws++;
+		// A program that touches storage has a barrier between its draws, which a pass cannot hold.
+		if (together && LeanFrame.ENABLED && !pipeline.touchesStorage()) {
+			if (!joins(program.shadow(), outputs)) flushMeshes();
+			long queueStarted = System.nanoTime();
+			queueMesh(planned, draw, handle, images);
+			FrameStats.meshTime(System.nanoTime() - queueStarted);
+			return;
+		}
+		flushMeshes();
+		LeanFrame.meshPasses++;
 		long meshStarted = System.nanoTime();
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
 			renderer.endRenderPass(cmd);
-			long set = allocateSet(stack, pipeline.setLayout());
-			writeDescriptors(stack, set, pipeline, program.loaded(), program.uniforms(), outputs,
+			long set = meshSet(stack, pipeline, program.loaded(), program.uniforms(), outputs,
 					program.shadow() ? this.shadow.depth() : this.depth, images, planned.key());
 			if (program.shadow()) beginShadowPass(cmd, stack, outputs); else beginGeometryPass(cmd, stack, outputs);
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
@@ -1194,6 +1229,110 @@ public final class PackRenderer implements AutoCloseable {
 			vkCmdEndRenderPass(cmd);
 		}
 		FrameStats.meshTime(System.nanoTime() - meshStarted);
+	}
+
+	/** A mesh draw with everything it binds settled, short of being recorded. */
+	private record QueuedMesh(long pipeline, long layout, long set, boolean bias, float biasUnits, float biasFactor, MeshDraw draw) {
+	}
+
+	/** Whether a draw into these targets can be recorded in the pass of the ones waiting. */
+	private boolean joins(boolean shadow, List<VulkanImage> outputs) {
+		if (this.meshQueue.isEmpty()) return true;
+		if (this.queueShadow != shadow || this.queueOutputs.size() != outputs.size()) return false;
+		for (int i = 0; i < outputs.size(); i++) {
+			if (this.queueOutputs.get(i) != outputs.get(i)) return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Settles what a mesh draw binds and leaves it waiting. Every draw used to end VulkanMod's pass, begin one of the
+	 * pack's, draw, end it and have VulkanMod begin its own again; the draws of a level's entities, block entities and
+	 * particles come dozens in a row into the same targets, and here they wait for one another and are recorded in one
+	 * pass ({@link #flushMeshes}).
+	 * <p>
+	 * Nothing is recorded here. The set is written now, with the uniform blocks as the draw found them; the vertices
+	 * are this frame's copy; the pipeline carries the game's state as it was. The images the draw samples are only
+	 * noted, since a layout cannot change inside a pass: none of them is a target of the waiting draws, which all draw
+	 * into the same ones and never sample what they draw into.
+	 */
+	private void queueMesh(PlannedMesh planned, MeshDraw draw, long handle, GameImages images) {
+		MeshPrograms.Program program = planned.program();
+		PackPipeline pipeline = program.pipeline();
+		if (this.meshQueue.isEmpty()) {
+			this.queueShadow = program.shadow();
+			this.queueOutputs = planned.outputs();
+		}
+		long set;
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			this.sampledLater = this.queueSampled;
+			set = meshSet(stack, pipeline, program.loaded(), program.uniforms(), planned.outputs(),
+					program.shadow() ? this.shadow.depth() : this.depth, images, planned.key());
+		} finally {
+			this.sampledLater = null;
+		}
+		this.meshQueue.add(new QueuedMesh(handle, pipeline.layout(), set, planned.style().depthBias(), planned.biasUnits(),
+				planned.biasFactor(), draw));
+	}
+
+	/**
+	 * Records the waiting mesh draws, in the order they came, in one pass. Called before anything else of this class
+	 * is recorded and before what they drew into is read or copied: every other place that records begins with it,
+	 * and so does a mesh draw that goes into other targets. Those are the places a mesh draw itself was recorded in
+	 * before, so VulkanMod's state is taken and put back here exactly where it was then.
+	 */
+	private void flushMeshes() {
+		if (this.meshQueue.isEmpty()) return;
+		if (!this.frameOpen) {
+			dropMeshes();
+			return;
+		}
+		long started = System.nanoTime();
+		Renderer renderer = Renderer.getInstance();
+		VkCommandBuffer cmd = Renderer.getCommandBuffer();
+		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
+			renderer.endRenderPass(cmd);
+			for (VulkanImage image : this.queueSampled) {
+				image.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			}
+			if (this.queueShadow) beginShadowPass(cmd, stack, this.queueOutputs); else beginGeometryPass(cmd, stack, this.queueOutputs);
+			long pipeline = 0L;
+			long set = 0L;
+			for (QueuedMesh mesh : this.meshQueue) {
+				try (MemoryStack each = stack.push()) {
+					if (mesh.pipeline() != pipeline) {
+						vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh.pipeline());
+						pipeline = mesh.pipeline();
+						set = 0L;
+					}
+					if (mesh.set() != set) {
+						vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh.layout(), 0, each.longs(mesh.set()), null);
+						set = mesh.set();
+					}
+					if (mesh.bias()) vkCmdSetDepthBias(cmd, mesh.biasUnits(), 0.0F, mesh.biasFactor());
+					mesh.draw().draw(cmd, each);
+				}
+			}
+			vkCmdEndRenderPass(cmd);
+			LeanFrame.meshPasses++;
+		} finally {
+			dropMeshes();
+			FrameStats.meshTime(System.nanoTime() - started);
+		}
+	}
+
+	private void dropMeshes() {
+		this.meshQueue.clear();
+		this.queueSampled.clear();
+		this.queueOutputs = null;
+	}
+
+	private void noteSampled(VulkanImage image) {
+		List<VulkanImage> noted = this.sampledLater;
+		for (int i = 0; i < noted.size(); i++) {
+			if (noted.get(i) == image) return;
+		}
+		noted.add(image);
 	}
 
 	/**
@@ -1301,6 +1440,7 @@ public final class PackRenderer implements AutoCloseable {
 	 * frame, so they run behind it. Iris's order ({@code shadows/ShadowRenderer.java}).
 	 */
 	private void openAndShadow(net.minecraft.client.Camera camera) {
+		flushMeshes();
 		var position = camera.getPosition();
 		double camX = position.x, camY = position.y, camZ = position.z;
 		Renderer renderer = Renderer.getInstance();
@@ -1322,6 +1462,8 @@ public final class PackRenderer implements AutoCloseable {
 			if (map && casters.anyFeature()) {
 				List<RenderSection> sections = areas.stream().flatMap(area -> area.sections().stream()).toList();
 				ShadowFeatures.render(this.values, camera, sections, casters);
+				// The mobs and block entities it drew are waiting: into the map before it is copied and read.
+				flushMeshes();
 				// The nested draws resume VulkanMod's target; the depth copy must be outside that pass.
 				renderer.endRenderPass(cmd);
 			}
@@ -1350,6 +1492,7 @@ public final class PackRenderer implements AutoCloseable {
 		DistantPrograms.Half half = DistantPrograms.Half.of(opaque, light);
 		DistantPrograms.Program program = this.distant.program(half);
 		if (program == null) return false;
+		flushMeshes();
 		PackPipeline pipeline = program.pipeline();
 		Renderer renderer = Renderer.getInstance();
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
@@ -1622,6 +1765,7 @@ public final class PackRenderer implements AutoCloseable {
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		VulkanImage screen = screen();
 		if (screen == null) return;
+		flushMeshes();
 		try (Renderer.RenderTargetScope scope = renderer.temporaryRenderTarget(); MemoryStack stack = MemoryStack.stackPush()) {
 			renderer.endRenderPass(cmd);
 			openFrame(cmd, stack);
@@ -1920,10 +2064,90 @@ public final class PackRenderer implements AutoCloseable {
 	 */
 	private void writeDescriptors(MemoryStack stack, long set, PackPipeline pipeline, PackProgram.Loaded loaded,
 			UniformBlock block, List<VulkanImage> outputs, VulkanImage attachedDepth, GameImages game, DrawKey draw) {
+		VkWriteDescriptorSet.Buffer writes = describe(stack, pipeline, loaded, block, outputs, attachedDepth, game, draw, null);
+		for (int i = 0; i < writes.limit(); i++) writes.get(i).dstSet(set);
+		vkUpdateDescriptorSets(Vk.device(), writes, null);
+	}
+
+	/**
+	 * The set of a mesh draw. Many draws of a frame bind the very same things: one atlas, one light map, the blocks
+	 * of one {@link DrawKey}, the pack's targets as they stand. Such a draw binds the set the first of them wrote
+	 * where it used to allocate and write one of its own. What a set holds is all there is to it, so two that hold
+	 * the same are one; the layouts its images have to be in are still seen to for every draw.
+	 */
+	private long meshSet(MemoryStack stack, PackPipeline pipeline, PackProgram.Loaded loaded, UniformBlock block,
+			List<VulkanImage> outputs, VulkanImage attachedDepth, GameImages game, DrawKey draw) {
+		if (!LeanFrame.ENABLED) {
+			long set = allocateSet(stack, pipeline.setLayout());
+			writeDescriptors(stack, set, pipeline, loaded, block, outputs, attachedDepth, game, draw);
+			return set;
+		}
+		SetContents probe = this.setProbe;
+		probe.begin(pipeline.setLayout(), pipeline.slots.size());
+		VkWriteDescriptorSet.Buffer writes = describe(stack, pipeline, loaded, block, outputs, attachedDepth, game, draw, probe);
+		Long known = this.meshSets.get(probe);
+		if (known != null) {
+			LeanFrame.setsReused++;
+			return known;
+		}
+		long set = allocateSet(stack, pipeline.setLayout());
+		for (int i = 0; i < writes.limit(); i++) writes.get(i).dstSet(set);
+		vkUpdateDescriptorSets(Vk.device(), writes, null);
+		this.meshSets.put(probe.copy(), set);
+		LeanFrame.setsWritten++;
+		return set;
+	}
+
+	/** What a descriptor set holds, binding by binding: three numbers each, after the layout it was allocated for. */
+	private static final class SetContents {
+		private long[] values = new long[1 + 3 * 48];
+		private int length;
+
+		void begin(long layout, int slots) {
+			if (this.values.length < 1 + 3 * slots) this.values = new long[1 + 3 * slots];
+			this.values[0] = layout;
+			this.length = 1;
+		}
+
+		void add(long first, long second, long third) {
+			this.values[this.length++] = first;
+			this.values[this.length++] = second;
+			this.values[this.length++] = third;
+		}
+
+		SetContents copy() {
+			SetContents kept = new SetContents();
+			kept.values = Arrays.copyOf(this.values, this.length);
+			kept.length = this.length;
+			return kept;
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			return other instanceof SetContents that && Arrays.equals(this.values, 0, this.length, that.values, 0, that.length);
+		}
+
+		@Override
+		public int hashCode() {
+			int hash = 1;
+			for (int i = 0; i < this.length; i++) hash = 31 * hash + Long.hashCode(this.values[i]);
+			return hash;
+		}
+	}
+
+	/**
+	 * Everything a set of this pipeline is written with, the set itself left open, and the layouts its images have
+	 * to be in seen to.
+	 *
+	 * @param contents where to note what the set holds, or null
+	 */
+	private VkWriteDescriptorSet.Buffer describe(MemoryStack stack, PackPipeline pipeline, PackProgram.Loaded loaded,
+			UniformBlock block, List<VulkanImage> outputs, VulkanImage attachedDepth, GameImages game, DrawKey draw,
+			SetContents contents) {
 		VkCommandBuffer cmd = Renderer.getCommandBuffer();
 		VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(pipeline.slots.size(), stack);
 		// Only for a program that touches storage: this stops the whole GPU, and it would be once per draw.
-		if (pipeline.slots.stream().anyMatch(slot -> slot.type() == SpirvModule.STORAGE_IMAGE || slot.type() == SpirvModule.STORAGE_BUFFER)) {
+		if (pipeline.touchesStorage()) {
 			PackStorage.barrier(cmd, stack);
 		}
 		Set<VulkanImage> stored = new HashSet<>();
@@ -1937,7 +2161,7 @@ public final class PackRenderer implements AutoCloseable {
 		}
 		int count = 0;
 		for (PackPipeline.Slot slot : pipeline.slots) {
-			VkWriteDescriptorSet write = writes.get(count).sType$Default().dstSet(set).dstBinding(slot.binding())
+			VkWriteDescriptorSet write = writes.get(count).sType$Default().dstBinding(slot.binding())
 					.descriptorType(slot.type()).descriptorCount(slot.count());
 			switch (slot.type()) {
 				case SpirvModule.UNIFORM_BUFFER -> {
@@ -1947,18 +2171,21 @@ public final class PackRenderer implements AutoCloseable {
 					} else if (LegacyGlsl.GAME_TRANSFORMS.equals(slot.name())) {
 						slice = draw == null ? writeTransforms(null) : this.drawTransforms.computeIfAbsent(draw, this::writeTransforms);
 					} else {
-						slice = this.ubo.allocate(256);
-						for (int i = 0; i < 256; i++) slice.bytes().put(i, (byte) 0);
+						slice = zeroBlock();
 					}
 					write.pBufferInfo(VkDescriptorBufferInfo.calloc(1, stack).buffer(slice.buffer()).offset(slice.offset())
 							.range(slice.bytes().capacity()));
+					if (contents != null) contents.add(slice.buffer(), slice.offset(), slice.bytes().capacity());
 				}
-				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC -> write.pBufferInfo(VkDescriptorBufferInfo.calloc(1, stack)
-						.buffer(this.sectionCorners.buffer()).offset(this.sectionCorners.offset()).range(16));
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC -> {
+					write.pBufferInfo(VkDescriptorBufferInfo.calloc(1, stack)
+							.buffer(this.sectionCorners.buffer()).offset(this.sectionCorners.offset()).range(16));
+					if (contents != null) contents.add(this.sectionCorners.buffer(), this.sectionCorners.offset(), 16);
+				}
 				case SpirvModule.COMBINED_IMAGE_SAMPLER -> {
 					VulkanImage image = sampled(slot, loaded, outputs, attachedDepth, game);
 					int layout = stored.contains(image) ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-					image.transitionImageLayout(stack, cmd, layout);
+					if (this.sampledLater != null) noteSampled(image); else image.transitionImageLayout(stack, cmd, layout);
 					long sampler = slot.depth() ? this.shadow.compare(image) : image.getSampler();
 					long view = this.storage.image(slot.name()) == image ? this.storage.view(slot.name()) : image.getImageView();
 					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
@@ -1966,6 +2193,7 @@ public final class PackRenderer implements AutoCloseable {
 						info.get(i).imageView(view).sampler(sampler).imageLayout(layout);
 					}
 					write.pImageInfo(info);
+					if (contents != null) contents.add(view, sampler, layout);
 				}
 				case SpirvModule.STORAGE_IMAGE -> {
 					VulkanImage image = storageImage(slot.name(), loaded);
@@ -1973,6 +2201,7 @@ public final class PackRenderer implements AutoCloseable {
 					VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(slot.count(), stack);
 					for (int i = 0; i < slot.count(); i++) info.get(i).imageView(view).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
 					write.pImageInfo(info);
+					if (contents != null) contents.add(view, 0L, VK_IMAGE_LAYOUT_GENERAL);
 				}
 				case SpirvModule.STORAGE_BUFFER -> {
 					var buffer = this.storage.buffer(slot.name());
@@ -1980,13 +2209,23 @@ public final class PackRenderer implements AutoCloseable {
 					VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(slot.count(), stack);
 					for (int i = 0; i < slot.count(); i++) info.get(i).buffer(buffer.handle()).offset(0).range(buffer.size());
 					write.pBufferInfo(info);
+					if (contents != null) contents.add(buffer.handle(), 0L, buffer.size());
 				}
 				default -> throw new IllegalStateException("Unsupported descriptor " + slot.name() + " in " + loaded.path());
 			}
 			count++;
 		}
 		writes.limit(count);
-		vkUpdateDescriptorSets(Vk.device(), writes, null);
+		return writes;
+	}
+
+	/** Noughts for a block this mod has nothing to write to: every draw of a frame reads the same ones. */
+	private FrameArena.Slice zeroBlock() {
+		if (LeanFrame.ENABLED && this.zeroBlock != null) return this.zeroBlock;
+		FrameArena.Slice slice = this.ubo.allocate(256);
+		for (int i = 0; i < 256; i++) slice.bytes().put(i, (byte) 0);
+		this.zeroBlock = slice;
+		return slice;
 	}
 
 	/** The pack's block: written once for all the draws of a frame that agree on what it reads per draw. */

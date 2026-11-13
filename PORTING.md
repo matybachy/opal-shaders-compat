@@ -358,6 +358,131 @@ None of this was the invisible blocks: in that log 37 to 264 sections per 10 s w
 
 Not verified: all of it at run time, and why the flags and the light were lost.
 
+## Frame rate: where 75 minutes of play went, and four savings (2026-11-12)
+
+Built, not run: the user tests in the game.
+
+The user's log of 2026-11-11, 19:23 to 20:41, with a pack on, at their base: 151626 frames of 15.7 ms on average (64 fps) and 442267 samples of the render
+thread in the `[where]` blocks. Added up over all of them:
+
+| Part of the frame | Share of the samples |
+|---|---|
+| HUD | 18.6 % |
+| submit and present | 18.6 % |
+| the pack's mesh draws | 12.6 % |
+| texture animations | 6.1 % |
+| level, the rest | 6.1 % |
+| tick | 4.9 % |
+| screen | 4.9 % |
+| frame start | 4.2 % |
+| entities | 4.1 % |
+| pack passes | 3.6 % |
+| shadow map | 3.4 % |
+| block entities | 2.7 % |
+
+By method: `Renderer.submitFrame` 16.6 %, `GuiEntityRenderState.restoreDeferredDrawState` 6.0 %, `GuiEntityRenderState.hasDeferredDrawState` 5.9 %,
+`StagingBuffer.copyBuffer` 4.3 %, `Renderer.preInitFrame` 3.8 %, `GuiItemRenderState.restoreDeferredDrawState` 3.3 %, `GuiItemRenderState.hasDeferredDrawState`
+2.1 %, `PackRenderer.writeDescriptors` 1.7 %. The `[pack]` lines: a median of 37 mesh draws a frame taking 1.48 ms, 40 microseconds a draw; the `[textures]`
+lines: 234 animation frames uploaded a tick and 9 left alone.
+
+**Is it the processor or the device?** The render thread had a processor 75 to 94 % of the time (`[pack]`). The 88 blocks of 30 s sorted by frame time, in
+fifths, each part as milliseconds of a frame (share times frame time):
+
+| Frame | Submit and present | Frame start | HUD and screen | Mesh draws | Texture animations | The rest |
+|---|---|---|---|---|---|---|
+| 12.9 | 2.79 | 0.52 | 3.28 | 1.22 | 0.77 | 4.32 |
+| 14.4 | 2.84 | 0.69 | 3.40 | 1.61 | 0.87 | 4.98 |
+| 15.6 | 3.23 | 0.70 | 3.46 | 1.87 | 0.95 | 5.42 |
+| 17.9 | 2.86 | 0.79 | 4.13 | 2.67 | 1.10 | 6.37 |
+| 22.5 | 2.46 | 0.55 | 4.95 | 3.64 | 1.38 | 9.58 |
+
+Submitting and presenting takes 2.5 to 3.2 ms whether the frame is 12.9 ms or 22.5 ms. A render thread held up by the device would wait longer the slower the
+frame; this one does not, so a slow frame is slow by what the render thread itself does, and what it does less of comes off the frame time. Which of the two calls
+in `submitFrame` the 2.8 ms is, `vkQueueSubmit` or `vkQueuePresentKHR`, the samples cannot say (both are native calls of the one method); `RendererMixin` now
+times each for the `[lean]` line.
+
+### VMR's deferred GUI state: a thread-local asked at every batch end
+
+`BufferSourceM` (VMR's mixin into `MultiBufferSource.BufferSource`) asks `GuiEntityRenderState.hasDeferredDrawState()` and
+`GuiItemRenderState.hasDeferredDrawState()` at the head of `endBatch(RenderType)` and calls both `restoreDeferredDrawState()` at its return, every time, unless a
+full `endBatch()` found a state at its own head. Each of the two keeps its state in a `ThreadLocal<RenderStateSnapshot>`: `hasDeferredDrawState` is
+`DEFERRED_DRAW_STATE.get() != null`, `restoreDeferredDrawState` is `get()`, `remove()`, then `restore()` if there was one. The source under `refs/` and the 0.3.5
+jar agree (`javap -c`), and the only writer is `prepareDeferredDraw` (`javap`: no other method touches the field).
+
+`ThreadLocal.get()` on a thread with no entry for it makes one (`setInitialValue`), and `remove()` takes it out again. Vanilla's `endBatch()` ends every fixed
+buffer in turn, about thirty render types and more with mods, and the GUI flushes after nearly every element (`GuiGraphics.flush`). So every flush of the HUD makes
+and removes sixty-odd thread-local entries to learn, sixty-odd times, that nothing is pending. That is the four methods above: 17.3 % of the samples.
+
+`GuiEntityDeferredStateMixin` and `GuiItemDeferredStateMixin` keep "there may be a snapshot" in a static field for the render thread. `prepareDeferredDraw` sets
+it before VMR sets its thread-local; `restoreDeferredDrawState` clears it and runs VMR's code; while it is clear, `hasDeferredDrawState` answers false and
+`restoreDeferredDrawState` returns, both without touching the thread-local. The field is never clear while a snapshot is there, and while it is set VMR's own code
+answers, so what VMR does is the same on every path; other threads go to VMR's code as before.
+
+### An upload copies the whole image for a rectangle of it
+
+`VulkanImage.uploadSubTextureAsync` begins `long imageSize = buffer.limit()` and copies that many bytes to the staging buffer
+(`stagingBuffer.copyBuffer((int) imageSize, buffer)`), then has the device read a rectangle from an offset into the copy. `MNativeImage._upload` (VMR's overwrite)
+hands it the `NativeImage`'s whole buffer and `this.getWidth()` as the row length. For an animated sprite that image is every frame of the animation, one under the
+other: a 16 by 16 sprite of 32 frames is 32 KB copied for the 1 KB that is read, for each of the 234 uploads of a tick. `StagingBuffer.copyBuffer` is 4.3 % of the
+samples, of the 6.1 % that texture animations take.
+
+`texture/TextureRows`, through a `@WrapMethod` in `VulkanImageMixin`: the upload is handed a view of the image from the rectangle's first texel to its last,
+`((height - 1) * rowLength + width) * formatSize` bytes from `(rowLength * skipRows + skipPixels) * formatSize`, and skips of nought. VMR's own arithmetic then
+puts the device at the start of the copy with the same row length, so the same texels reach the same place. An upload of a whole image, one whose buffer does not
+start at its beginning, and one whose rectangle reaches past the buffer are handed on untouched.
+
+### One descriptor set for the mesh draws that bind the same
+
+Every mesh draw allocated a descriptor set and wrote every binding of its pipeline. Draws of one batch kind bind the same atlas, light map and overlay, the same
+two uniform blocks (they are already shared by `DrawKey`) and the pack's targets as they stand. `PackRenderer.meshSet` notes what a set would hold (`SetContents`:
+the set layout, then buffer, offset and range or view, sampler and layout for each binding) and binds the set an earlier draw of the frame wrote if one holds
+exactly that. The layout transitions of the images a draw samples, and the storage barrier, are still done for every draw. The sets are forgotten when a frame is
+opened. A block of noughts for a uniform block this mod knows nothing of is written once a frame, not once a draw.
+
+### One render pass for the mesh draws in a row
+
+Every mesh draw ended VMR's pass, began one of the pack's, drew, ended it, and VMR's scope began its own again (`submitMesh`): two passes begun and the game's
+render state saved and put back for one draw. That is most of the 40 microseconds a draw, with a median of 37 draws a frame and up to 203.
+
+`PackRenderer.queueMesh` settles a draw without recording it: the pipeline (it carries the game's state as it was at the draw), the descriptor set (written then,
+with the uniform blocks as the draw found them), the depth bias, and the `MeshDraw`, whose vertices are this frame's copy. `flushMeshes` records all that wait in
+one pass: VMR's pass ended once, the images they sample put into the layout to be read, one pass begun, each draw bound and drawn in the order it came (the
+pipeline and the set only where they change), the pass ended, VMR's state put back once.
+
+Why what is drawn stays the same:
+
+- **What waits goes into the same targets** (`joins`): a draw into other targets, or a draw into the shadow map after one into the world, has the waiting ones
+  recorded first.
+- **Every other place that records begins with a flush.** `terrainLayer`, `copyPreHandDepth`, `renderTranslucentHand`, `distantHalf`, `finishFrame`,
+  `openAndShadow` and, inside that one, the line after `ShadowFeatures.render`. These and `submitMesh` are the only places of this mod that take VMR's command
+  buffer while a pack draws (`Renderer.getCommandBuffer()`, by `grep`), so nothing of the pack's is recorded, copied or read with a draw still waiting: the
+  deferred passes, the depth copies and the translucent terrain find the targets as they did. And a flush happens only where a mesh draw or one of those places
+  recorded before, so VMR's state is taken and put back in the situations it was before.
+- **VMR's own draws** go into VMR's target, which the pack's final pass overwrites; their order against the pack's draws never mattered.
+- **Layouts.** A pass cannot hold a layout change, so the images a waiting draw samples are noted (`describe` with `sampledLater` set) and changed at the flush.
+  None of them is a target of the batch: a draw never samples what it draws into (`sampledByName` gives another image for an output and for the attached depth),
+  and all the draws of a batch draw into the same targets.
+- **Not queued:** a `VBO`'s draw (`storedMesh`: the sky, the stars, the clouds, a mod's buffer), which reads buffers this mod does not own and is recorded at once,
+  after a flush, as before; and a program that binds storage, whose barrier between two draws a pass cannot hold.
+- **A level that was never finished** leaves nothing behind: `openFrame` drops what waits, and so does a flush with no frame open.
+
+`leanFrame=false` records every draw in its own pass again.
+
+### Looked at and left
+
+- **`AnimatedSprites` leaves only 9 of 243 animations alone** at this base: a mark never expires. Marks that expire would freeze an animated texture in a mesh a mod
+  builds once and keeps (Create's cached buffers), so it was left; with only the rows copied an upload is much cheaper anyway.
+- **The shadow pass is 12 % altogether**, terrain, entities and block entities drawn a second time. That is the pack's shadow distance and resolution: a setting.
+
+### The `[lean]` line
+
+Every ten seconds with the `[pack]` line: GUI state lookups answered from the field, the mesh draws and the passes they were recorded in, their descriptor sets
+reused and written, milliseconds of `vkQueueSubmit` and of `vkQueuePresentKHR`, all a frame; and the kilobytes of texture uploads copied and left out in those
+ten seconds. `leanFrame=false` in `config/opalcompat.properties` turns the four savings off and the line says so.
+
+Not verified: all of it at run time, and how much frame time each gives back. The sampler reads stacks at safepoints, which can move a sample a few instructions
+from where the time went, so the shares above are where to look and not the exact size of a saving.
+
 ## Frame rate: what the log of 2026-11-10 says, and a sampler for what it cannot (2026-11-10)
 
 Built, not run: the user tests in the game.
@@ -622,9 +747,10 @@ applies, so a wrong target brings the game down at startup.
 | `BlockEntityRenderDispatcherMixin`, `ItemRendererMixin`, `ItemInHandRendererMixin`, `ParticleEngineMixin` | `render`, `render`, `renderArmWithItem`, `render` (5 arguments) | yes |
 | `GameRendererAccessor`, `LevelRendererAccessor`, `TextureAtlasAccessor`, `BiomesMixin` | `getFov`, `bobHurt`, `bobView`, `renderHand`, `renderEntity`, static `Biomes.register` | yes |
 | `VboMixin`, `VboAccessor` | `VBO.drawWithShader(..., ShaderInstance)`, `VBO` fields | no |
-| `VulkanImageMixin` | static `VulkanImage.transitionImageLayout(MemoryStack, VkCommandBuffer, VulkanImage, int)` | no |
+| `VulkanImageMixin` | static `VulkanImage.transitionImageLayout(MemoryStack, VkCommandBuffer, VulkanImage, int)`; `VulkanImage.uploadSubTextureAsync` (wrapped: only the rows an upload reads are copied, `TextureRows`) | no |
 | `VTextureSelectorMixin` | static `VTextureSelector.uploadSubTexture` (HEAD) | no |
-| `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor` | no |
+| `RendererMixin`, `RendererAccessor` | `Renderer.endFrame`, `appliedDepthBiasUnits/Factor`; `vkQueueSubmit` and `vkQueuePresentKHR` in `Renderer.submitFrame` (timed for the `[lean]` line) | no |
+| `GuiEntityDeferredStateMixin`, `GuiItemDeferredStateMixin` | static `prepareDeferredDraw`, `hasDeferredDrawState`, `restoreDeferredDrawState` of `GuiEntityRenderState` and `GuiItemRenderState`: answered from a field on the render thread (`LeanFrame`) | no |
 | `WorldRendererMixin`, `WorldRendererAccessor`, `DrawBuffersAccessor`, `DrawParametersAccessor` | VMR's terrain | no |
 | `CustomVertexFormatMixin`, `TerrainBufferBuilderMixin`, `DeviceManagerMixin` | format, builder, `createLogicalDevice` | no |
 | `VulkanIdleMixin` | `Vulkan.waitIdle`, `Vulkan.cleanUp`: under `QueueLock` | no |
@@ -652,6 +778,7 @@ What ran is in Results on Vulkan. Consciously left out or not run:
 - `ChunkFlow` and its four mixins: built, not run, for the same reason.
 - `ChunkReadiness`, `RenderSectionReadyMixin`, `ChunkStatusMapAccessor` and the larger rebuild budget: built, not run, for the same reason.
 - `TerrainIndices`, `DrawBuffersUploadMixin`, `DrawerAccessor`: built, not run, for the same reason.
+- `LeanFrame`: `GuiEntityDeferredStateMixin`, `GuiItemDeferredStateMixin`, `TextureRows`, the mesh draws' shared descriptor sets (`PackRenderer.meshSet`), the mesh draws recorded in one pass (`queueMesh`, `flushMeshes`) and the timing of submit and present: built, not run, for the same reason. The one pass is the change to watch: what it gets wrong would show as entities, block entities, particles or the hand missing, drawn over what should cover them, or a crash in the pack's draws.
 - Opal on OpenGL with Create, Mekanism and DH: ran only with Opal and Vectors, one scene. `FlywheelShaderPackMixin` did not run in the game
   and Opal has no `dh_*` programs. The user's decision: Vulkan is enough.
 - A run without VMR after merging into one mod: it last ran as two jars. Now it is verified only statically (`scripts/release.py` makes sure

@@ -2,6 +2,7 @@ package dev.opalcompat.render;
 
 import dev.opalcompat.OpalCompat;
 import dev.opalcompat.diag.RenderSampler;
+import dev.opalcompat.perf.LeanFrame;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
@@ -89,6 +90,7 @@ final class FrameStats {
 					String.format(Locale.ROOT, "%.1f", (now - since) / 1.0e6 / frames), TimeUnit.NANOSECONDS.toMillis(longest),
 					slowestSecond == Double.MAX_VALUE ? "?" : String.valueOf(Math.round(slowestSecond)), processor,
 					meshDraws / frames, String.format(Locale.ROOT, "%.2f", meshNanos / 1.0e6 / frames), waiting);
+			LeanFrame.report(frames);
 		}
 		since = now;
 		frames = 0;
@@ -103,6 +105,7 @@ final class FrameStats {
 	private static void idle() {
 		frameStarted = 0L;
 		since = System.nanoTime();
+		LeanFrame.reset();
 		processorSince = -1L;
 		frames = 0;
 		secondStarted = 0L;

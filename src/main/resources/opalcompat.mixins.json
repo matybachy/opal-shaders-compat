@@ -49,6 +49,8 @@
     "RenderSectionReadyMixin",
     "DrawBuffersUploadMixin",
     "DrawerAccessor",
+    "GuiEntityDeferredStateMixin",
+    "GuiItemDeferredStateMixin",
     "DhDependencySetupMixin",
     "DhMainMixin",
     "DhRenderTasksMixin",
