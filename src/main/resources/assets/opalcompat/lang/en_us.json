@@ -45,5 +45,8 @@
   "opalcompat.compat.vectors.page.workload": "Workload",
   "opalcompat.compat.vectors.page.tune": "Tuning",
   "opalcompat.compat.vectors.open": "All of Vectors",
-  "opalcompat.compat.vectors.open.button": "Open..."
+  "opalcompat.compat.vectors.open.button": "Open...",
+  "opalcompat.page.clouds": "Cloud Height",
+  "opalcompat.page.clouds.game": "Game's own (192)",
+  "opalcompat.page.clouds.tip": "The height clouds are drawn at, in blocks. Moves the game's clouds and a shader pack's alike: packs such as Complementary place their cloud layers by the game's cloud height. The far left keeps the dimension's own, 192 in the overworld. The Nether and the End have no clouds."
 }

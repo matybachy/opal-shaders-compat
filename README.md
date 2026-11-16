@@ -74,6 +74,7 @@ A pack's settings are saved in `shaderpacks/<pack>.txt`, the same file Iris uses
 | `shaderPack` | empty | the pack that is drawn; empty is no pack. Set from the Shaders group |
 | `chunkFlow` | `true` | the chunk fixes: faster uploads, sections near the player first, sections built where VulkanMod Reforged would leave them unbuilt, 32-bit indices for dense sections |
 | `animateUsedTexturesOnly` | `true` | animated textures update only once something has drawn them. Also a switch in the Shaders group |
+| `cloudHeight` | `0` | the height clouds are drawn at, in blocks; 0 keeps the dimension's own (192). Moves the game's clouds and a shader pack's, which place their layers by the game's cloud height (Complementary: its altitude setting + `cloudHeight` - 192). Also a slider on the Shader Packs page |
 | `frameSampler` | `true` | the `[where]` lines in the log, see below |
 | `leanFrame` | `true` | the render thread savings: GUI state lookups answered from a field, only the rows an upload reads copied, descriptor sets shared between mesh draws, mesh draws in a row recorded in one render pass. Set it to `false` if something is drawn wrongly, to see whether it is one of these |
 

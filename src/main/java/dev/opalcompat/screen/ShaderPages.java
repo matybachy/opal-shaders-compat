@@ -1,6 +1,7 @@
 package dev.opalcompat.screen;
 
 import dev.vitrail.pack.load.PackLoader;
+import dev.opalcompat.world.CloudHeight;
 import dev.opalcompat.OpalCompat;
 import dev.opalcompat.pack.ShaderPacks;
 import dev.opalcompat.render.PackRenderer;
@@ -16,6 +17,7 @@ import net.vulkanmod.config.gui.ModSettingsRegistry;
 import net.vulkanmod.config.gui.OptionBlock;
 import net.vulkanmod.config.option.CyclingOption;
 import net.vulkanmod.config.option.Option;
+import net.vulkanmod.config.option.RangeOption;
 import net.vulkanmod.config.option.OptionPage;
 import net.vulkanmod.config.option.SwitchOption;
 
@@ -38,6 +40,7 @@ public final class ShaderPages {
 	private static SwitchOption enabled;
 	private static CyclingOption<String> pack;
 	private static SwitchOption usedTextures;
+	private static RangeOption cloudHeight;
 	private static Function<Screen, Screen> listScreen = ShaderPackScreen::new;
 	private static BiFunction<Screen, String, Screen> settingsScreen;
 
@@ -78,6 +81,11 @@ public final class ShaderPages {
 				ShaderPages::openFolder);
 		usedTextures = new SwitchOption(Component.translatable("opalcompat.page.textures"), value -> {}, AnimatedSprites::enabled);
 		usedTextures.setTooltip(Component.translatable("opalcompat.page.textures.tip"));
+		// 0 is the dimension's own height; the rest in steps of 8 blocks.
+		cloudHeight = new RangeOption(Component.translatable("opalcompat.page.clouds"), 0, CloudHeight.MAX, 8,
+				value -> value == 0 ? Component.translatable("opalcompat.page.clouds.game") : Component.literal(Integer.toString(value)),
+				value -> {}, CloudHeight::height);
+		cloudHeight.setTooltip(Component.translatable("opalcompat.page.clouds.tip"));
 		Option<?> status = new ActionOption(Component.translatable("opalcompat.page.status"), ShaderPages::status, null);
 		status.setTooltip(value -> statusInFull());
 
@@ -85,12 +93,14 @@ public final class ShaderPages {
 				new OptionBlock("", new Option<?>[] {enabled, pack}),
 				new OptionBlock("", new Option<?>[] {settings, list, folder}),
 				new OptionBlock("", new Option<?>[] {usedTextures}),
+				new OptionBlock("", new Option<?>[] {cloudHeight}),
 				new OptionBlock("", new Option<?>[] {status}),
 		}));
 	}
 
 	private static void apply() {
 		if (usedTextures != null && usedTextures.getAppliedValue() != AnimatedSprites.enabled()) AnimatedSprites.enable(usedTextures.getAppliedValue());
+		if (cloudHeight != null && cloudHeight.getAppliedValue() != CloudHeight.height()) CloudHeight.set(cloudHeight.getAppliedValue());
 		String chosen = enabled.getAppliedValue() ? pack.getAppliedValue() : NONE;
 		if (chosen.equals(ShaderPacks.selectedName())) return;
 		try {

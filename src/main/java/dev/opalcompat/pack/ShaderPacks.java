@@ -103,6 +103,23 @@ public final class ShaderPacks {
 		store(properties);
 	}
 
+	/** A whole number of this mod's own in the same file. */
+	public static int number(String key, int fallback) {
+		String value = config().getProperty(key);
+		if (value == null) return fallback;
+		try {
+			return Integer.parseInt(value.trim());
+		} catch (NumberFormatException e) {
+			return fallback;
+		}
+	}
+
+	public static void setNumber(String key, int value) throws IOException {
+		Properties properties = config();
+		properties.setProperty(key, Integer.toString(value));
+		store(properties);
+	}
+
 	/** The pack that was on last, for when shaders go back on. */
 	public static String lastName() {
 		return config().getProperty(LAST_KEY, "").trim();
