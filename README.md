@@ -1,3 +1,6 @@
+<img width="1947" height="353" alt="image" src="https://github.com/user-attachments/assets/11f1a98c-5886-470a-96a3-3c9af00a06de" />
+<img width="1988" height="185" alt="image" src="https://github.com/user-attachments/assets/a12494ec-07cc-4221-8b30-674c753fbad9" />
+<img width="2000" height="770" alt="image" src="https://github.com/user-attachments/assets/68c7d665-9f54-4949-aff9-34d2304b9228" />
 # Opal Compat
 
 Runs OptiFine and Iris format shader packs on [VulkanMod Reforged](https://github.com/TrulyRin/VulkanMod-Reforged) on Minecraft 1.21.1 with NeoForge, and makes Opal Shaders, Vectors, Distant Horizons, Create and Mekanism work with it.
@@ -161,8 +164,6 @@ Up to 0.3.0 this was Vitrail VK and Vitrail Bridge. Since 0.4.0 it is one mod, O
 ## License
 
 [LGPL-3.0-only](LICENSE), with the [GPL-3.0](COPYING) it refers to. Third-party material and its terms are listed in [NOTICE](NOTICE) and [NOTICE-vitrail](NOTICE-vitrail). VulkanMod Reforged, Distant Horizons, Opal, Vectors and Flywheel are not redistributed.
-<img width="1947" height="353" alt="image" src="https://github.com/user-attachments/assets/11f1a98c-5886-470a-96a3-3c9af00a06de" />
-<img width="1988" height="185" alt="image" src="https://github.com/user-attachments/assets/a12494ec-07cc-4221-8b30-674c753fbad9" />
-<img width="2000" height="770" alt="image" src="https://github.com/user-attachments/assets/68c7d665-9f54-4949-aff9-34d2304b9228" />
+
 
 
