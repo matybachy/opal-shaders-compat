@@ -161,9 +161,8 @@ Up to 0.3.0 this was Vitrail VK and Vitrail Bridge. Since 0.4.0 it is one mod, O
 ## License
 
 [LGPL-3.0-only](LICENSE), with the [GPL-3.0](COPYING) it refers to. Third-party material and its terms are listed in [NOTICE](NOTICE) and [NOTICE-vitrail](NOTICE-vitrail). VulkanMod Reforged, Distant Horizons, Opal, Vectors and Flywheel are not redistributed.
-<img width="1988" height="185" alt="image" src="https://github.com/user-attachments/assets/50dd72ef-c6de-4fd5-a29a-f274e1df7cff" />
-<img width="1967" height="993" alt="image" src="https://github.com/user-attachments/assets/96eaf0d5-7d8d-493b-a507-bf5c6f7066f1" />
-![Uploading image.png…]()
-
+<img width="1947" height="353" alt="image" src="https://github.com/user-attachments/assets/11f1a98c-5886-470a-96a3-3c9af00a06de" />
+<img width="1988" height="185" alt="image" src="https://github.com/user-attachments/assets/a12494ec-07cc-4221-8b30-674c753fbad9" />
+<img width="2000" height="770" alt="image" src="https://github.com/user-attachments/assets/68c7d665-9f54-4949-aff9-34d2304b9228" />
 
 
