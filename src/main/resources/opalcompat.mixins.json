@@ -28,6 +28,8 @@
     "BlockEntityRenderDispatcherMixin",
     "CustomVertexFormatMixin",
     "TerrainBufferBuilderMixin",
+    "TerrainBufferBuilderAccessor",
+    "LiquidRendererMixin",
     "WorldRendererMixin",
     "WorldRendererAccessor",
     "DrawBuffersAccessor",
