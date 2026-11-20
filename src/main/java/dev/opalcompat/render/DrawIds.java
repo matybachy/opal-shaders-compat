@@ -11,6 +11,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.SolidBucketItem;
 import net.minecraft.world.level.block.state.BlockState;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 
@@ -60,5 +61,13 @@ public record DrawIds(int entity, int blockEntity, int item, Kind kind) {
 		buffer.putInt(offset + 4, this.blockEntity);
 		buffer.putInt(offset + 8, this.item);
 		buffer.putInt(offset + 12, 0);
+	}
+
+	/** The same four lanes at an address in mapped memory, in the native order a native-order buffer writes. */
+	void put(long address) {
+		MemoryUtil.memPutInt(address, this.entity);
+		MemoryUtil.memPutInt(address + 4, this.blockEntity);
+		MemoryUtil.memPutInt(address + 8, this.item);
+		MemoryUtil.memPutInt(address + 12, 0);
 	}
 }

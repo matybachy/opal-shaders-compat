@@ -132,6 +132,11 @@ final class PackPipeline implements AutoCloseable {
 		static final int MID_TEX = 16;
 		static final int TANGENT = 24;
 
+		/** What of it a vertex stage reads, as bits of {@link PackPipeline#derivedReads}. */
+		static final int READS_IDS = 1;
+		static final int READS_MID_TEX = 2;
+		static final int READS_TANGENT = 4;
+
 		private Derived() {
 		}
 	}
@@ -182,7 +187,7 @@ final class PackPipeline implements AutoCloseable {
 	final ProgramTranslator.TranslatedProgram program;
 	final List<Slot> slots;
 	private Boolean touchesStorage;
-	private final boolean readsDerived;
+	private final int derivedReads;
 	private final Map<ProgramStage, Long> modules = new LinkedHashMap<>();
 	private final Map<String, Integer> vertexInputs = new HashMap<>();
 	private final long setLayout;
@@ -205,7 +210,7 @@ final class PackPipeline implements AutoCloseable {
 		this.name = name;
 		this.kind = kind;
 		this.program = program;
-		boolean derived = false;
+		int derived = 0;
 
 		Map<String, Slot> byName = new LinkedHashMap<>();
 		if (kind == Kind.COMPUTE) {
@@ -246,22 +251,35 @@ final class PackPipeline implements AutoCloseable {
 			link(geometry != null ? geometry : vertex, fragment);
 
 			vertex.inputs().forEach((inputName, entry) -> this.vertexInputs.put(inputName, entry.location()));
-			for (String input : DERIVED_ATTRIBUTES.keySet()) {
-				SpirvModule.Interface entry = vertex.inputs().get(input);
-				derived |= entry != null && entry.read();
-			}
+			if (reads(vertex, "EntityIds")) derived |= Derived.READS_IDS;
+			if (reads(vertex, "MidTexCoord")) derived |= Derived.READS_MID_TEX;
+			if (reads(vertex, "Tangent")) derived |= Derived.READS_TANGENT;
 			this.modules.put(ProgramStage.VERTEX, module(vertex.code()));
 			if (geometry != null) this.modules.put(ProgramStage.GEOMETRY, module(geometry.code()));
 			this.modules.put(ProgramStage.FRAGMENT, module(fragment.code()));
 		}
-		this.readsDerived = derived;
+		this.derivedReads = derived;
 		this.setLayout = createSetLayout();
 		this.layout = createLayout();
 	}
 
+	private static boolean reads(SpirvModule vertex, String input) {
+		SpirvModule.Interface entry = vertex.inputs().get(input);
+		return entry != null && entry.read();
+	}
+
 	/** Whether this program's vertex stage reads anything {@link Derived} holds. */
 	boolean readsDerived() {
-		return this.readsDerived;
+		return this.derivedReads != 0;
+	}
+
+	/**
+	 * Which of the three {@link Derived} holds this program's vertex stage reads, as {@code Derived.READS_} bits. A
+	 * shadow program reading the owner's ids alone has no use for the sprite middle and the tangent, which are most
+	 * of the work of building the stream.
+	 */
+	int derivedReads() {
+		return this.derivedReads;
 	}
 
 	private void renumber(SpirvModule module) {

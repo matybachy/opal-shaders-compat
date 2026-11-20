@@ -9,6 +9,7 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.memory.AutoIndexBuffer;
 import net.vulkanmod.vulkan.memory.IndexBuffer;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import java.nio.ByteBuffer;
@@ -48,15 +49,21 @@ final class MeshDraw {
 		this.derived = derived;
 	}
 
-	/** Null for an empty mesh. */
+	/**
+	 * Null for an empty mesh.
+	 *
+	 * @param derivedReads what of {@link PackPipeline.Derived} the programs drawing it read, as its {@code READS_}
+	 *                     bits; nought for none, where no derived stream is built
+	 */
 	static MeshDraw immediate(FrameArena arena, MeshData.DrawState state, ByteBuffer sourceVertices,
-			ByteBuffer sourceIndices, DrawIds[] ids, boolean derive, float lineWidth) {
+			ByteBuffer sourceIndices, DrawIds[] ids, int derivedReads, float lineWidth) {
 		int vertices = state.vertexCount();
 		if (vertices <= 0) return null;
 		int vertexBytes = Math.multiplyExact(vertices, state.format().getVertexSize());
 		FrameArena.Slice vertexSlice = copyBytes(arena, sourceVertices, vertexBytes);
 		FrameArena.Slice constants = constants(arena, lineWidth);
-		FrameArena.Slice derived = derive ? derive(arena, state, sourceVertices, ids) : null;
+		// Worked out from the copy, the same bytes, which is mapped memory read where it lies.
+		FrameArena.Slice derived = derivedReads != 0 ? derive(arena, state, vertexSlice, ids, derivedReads) : null;
 		if (sourceIndices != null) {
 			int count = state.indexCount();
 			if (count <= 0) return null;
@@ -179,23 +186,47 @@ final class MeshDraw {
 		return slice;
 	}
 
-	private static FrameArena.Slice derive(FrameArena arena, MeshData.DrawState state, ByteBuffer source, DrawIds[] ids) {
-		int vertices = state.vertexCount();
-		FrameArena.Slice slice = arena.allocate(Math.multiplyExact(vertices, PackPipeline.Derived.STRIDE));
-		ByteBuffer out = slice.bytes();
-		for (int vertex = 0; vertex < vertices; vertex++) {
-			int at = vertex * PackPipeline.Derived.STRIDE;
-			DrawIds id = ids != null && vertex < ids.length ? ids[vertex] : DrawIds.NONE;
-			id.put(out, at + PackPipeline.Derived.IDENTIFIERS);
-			out.putFloat(at + PackPipeline.Derived.MID_TEX, 0.5F).putFloat(at + PackPipeline.Derived.MID_TEX + 4, 0.5F);
-			out.putInt(at + PackPipeline.Derived.TANGENT, EntityFrame.FLAT);
+	/**
+	 * The derived stream of a mesh, from its copy in the arena.
+	 * <p>
+	 * Every vertex of a block entity the game draws each frame comes through here, twice with the light's map:
+	 * a Create water wheel or a Mekanism wind generator is thousands of them, and they are drawn again however
+	 * still the wheel stands. So the stream is written straight into mapped memory rather than through a
+	 * {@link ByteBuffer}'s checked accessors, the same native-order bytes the buffer wrote, and only what the
+	 * programs read is worked out: a shadow program taking the owner's ids alone gets no tangents.
+	 */
+	private static FrameArena.Slice derive(FrameArena arena, MeshData.DrawState state, FrameArena.Slice vertices,
+			DrawIds[] ids, int reads) {
+		int count = state.vertexCount();
+		FrameArena.Slice slice = arena.allocate(Math.multiplyExact(count, PackPipeline.Derived.STRIDE));
+		long out = MemoryUtil.memAddress0(slice.bytes());
+		boolean readsIds = (reads & PackPipeline.Derived.READS_IDS) != 0;
+		for (int vertex = 0; vertex < count; vertex++) {
+			long at = out + (long) vertex * PackPipeline.Derived.STRIDE;
+			DrawIds id = readsIds && ids != null && vertex < ids.length ? ids[vertex] : DrawIds.NONE;
+			id.put(at + PackPipeline.Derived.IDENTIFIERS);
+			MemoryUtil.memPutFloat(at + PackPipeline.Derived.MID_TEX, 0.5F);
+			MemoryUtil.memPutFloat(at + PackPipeline.Derived.MID_TEX + 4, 0.5F);
+			MemoryUtil.memPutInt(at + PackPipeline.Derived.TANGENT, EntityFrame.FLAT);
 		}
-		if (state.mode() == VertexFormat.Mode.QUADS) fillQuadFrames(out, state, source);
+		if (state.mode() == VertexFormat.Mode.QUADS
+				&& (reads & (PackPipeline.Derived.READS_MID_TEX | PackPipeline.Derived.READS_TANGENT)) != 0) {
+			fillQuadFrames(out, state, vertices.bytes(), (reads & PackPipeline.Derived.READS_TANGENT) != 0);
+		}
 		return slice;
 	}
 
-	/** Each quad's sprite middle and tangent. Other primitives keep the stand-ins above. */
-	private static void fillQuadFrames(ByteBuffer out, MeshData.DrawState state, ByteBuffer source) {
+	/**
+	 * Each quad's sprite middle and, where it is read, tangent. Other primitives keep the stand-ins above.
+	 * <p>
+	 * The tangent of a corner depends on the quad's first three corners and on that corner's own normal, so the
+	 * corners of a flat quad, which carry one normal between them, all get the same word: it is worked out once and
+	 * written four times, and again only where a corner's normal differs from the one before it. The arithmetic is
+	 * the same, in the same order, so the words are the same bits.
+	 *
+	 * @param source the mesh's vertices in mapped memory, from their first byte
+	 */
+	private static void fillQuadFrames(long out, MeshData.DrawState state, ByteBuffer source, boolean tangents) {
 		VertexFormat format = state.format();
 		List<String> names = format.getElementAttributeNames();
 		int positionIndex = names.indexOf("Position");
@@ -209,42 +240,68 @@ final class MeshDraw {
 		VertexFormatElement normal = normalIndex < 0 ? null : format.getElements().get(normalIndex);
 		if (normal != null && (normal.type() != VertexFormatElement.Type.BYTE || normal.count() < 3)) normal = null;
 		int stride = format.getVertexSize();
-		ByteBuffer in = source.duplicate().order(java.nio.ByteOrder.nativeOrder());
-		int base = in.position();
-		if ((long) state.vertexCount() * stride > in.remaining()) return;
+		int count = state.vertexCount();
+		if ((long) count * stride > source.capacity()) return;
+		long in = MemoryUtil.memAddress0(source);
 		int p = format.getOffset(position);
 		int t = format.getOffset(uv);
 		int n = normal == null ? -1 : format.getOffset(normal);
-		float[] xyz = new float[12];
-		float[] uvs = new float[8];
+		boolean flatten = n >= 0;
 		float[] face = new float[3];
-		for (int first = 0; first + 3 < state.vertexCount(); first += 4) {
+		int quadStride = 4 * PackPipeline.Derived.STRIDE;
+		for (int first = 0; first + 3 < count; first += 4) {
+			long c0 = in + (long) first * stride;
+			long c1 = c0 + stride;
+			long c2 = c1 + stride;
+			long c3 = c2 + stride;
+			float x0 = MemoryUtil.memGetFloat(c0 + p), y0 = MemoryUtil.memGetFloat(c0 + p + 4), z0 = MemoryUtil.memGetFloat(c0 + p + 8);
+			float x1 = MemoryUtil.memGetFloat(c1 + p), y1 = MemoryUtil.memGetFloat(c1 + p + 4), z1 = MemoryUtil.memGetFloat(c1 + p + 8);
+			float x2 = MemoryUtil.memGetFloat(c2 + p), y2 = MemoryUtil.memGetFloat(c2 + p + 4), z2 = MemoryUtil.memGetFloat(c2 + p + 8);
+			float u0 = MemoryUtil.memGetFloat(c0 + t), v0 = MemoryUtil.memGetFloat(c0 + t + 4);
+			float u1 = MemoryUtil.memGetFloat(c1 + t), v1 = MemoryUtil.memGetFloat(c1 + t + 4);
+			float u2 = MemoryUtil.memGetFloat(c2 + t), v2 = MemoryUtil.memGetFloat(c2 + t + 4);
+			float u3 = MemoryUtil.memGetFloat(c3 + t), v3 = MemoryUtil.memGetFloat(c3 + t + 4);
+			// Summed from nought corner by corner, as it always was: the same float, to the last bit.
 			float midU = 0.0F;
 			float midV = 0.0F;
-			for (int corner = 0; corner < 4; corner++) {
-				int at = base + (first + corner) * stride;
-				for (int axis = 0; axis < 3; axis++) xyz[corner * 3 + axis] = in.getFloat(at + p + axis * 4);
-				float u = in.getFloat(at + t);
-				float v = in.getFloat(at + t + 4);
-				uvs[corner * 2] = u;
-				uvs[corner * 2 + 1] = v;
-				midU += u * 0.25F;
-				midV += v * 0.25F;
+			midU += u0 * 0.25F;
+			midV += v0 * 0.25F;
+			midU += u1 * 0.25F;
+			midV += v1 * 0.25F;
+			midU += u2 * 0.25F;
+			midV += v2 * 0.25F;
+			midU += u3 * 0.25F;
+			midV += v3 * 0.25F;
+
+			long quad = out + (long) first * PackPipeline.Derived.STRIDE;
+			for (long dst = quad; dst < quad + quadStride; dst += PackPipeline.Derived.STRIDE) {
+				MemoryUtil.memPutFloat(dst + PackPipeline.Derived.MID_TEX, midU);
+				MemoryUtil.memPutFloat(dst + PackPipeline.Derived.MID_TEX + 4, midV);
 			}
-			boolean hasFace = n < 0 && EntityFrame.faceNormal(face, xyz[0], xyz[1], xyz[2], xyz[3], xyz[4], xyz[5],
-					xyz[6], xyz[7], xyz[8], xyz[9], xyz[10], xyz[11]);
+			if (!tangents) continue;
+
+			boolean hasFace = n < 0 && EntityFrame.faceNormal(face, x0, y0, z0, x1, y1, z1, x2, y2, z2,
+					MemoryUtil.memGetFloat(c3 + p), MemoryUtil.memGetFloat(c3 + p + 4), MemoryUtil.memGetFloat(c3 + p + 8));
+			int tangent = 0;
+			// NaN matches nothing, so the first corner is always worked out.
+			float lastX = Float.NaN;
+			float lastY = Float.NaN;
+			float lastZ = Float.NaN;
 			for (int corner = 0; corner < 4; corner++) {
-				int at = base + (first + corner) * stride;
-				float nx = n >= 0 ? Math.max(-1.0F, in.get(at + n) / 127.0F) : hasFace ? face[0] : 0.0F;
-				float ny = n >= 0 ? Math.max(-1.0F, in.get(at + n + 1) / 127.0F) : hasFace ? face[1] : 0.0F;
-				float nz = n >= 0 ? Math.max(-1.0F, in.get(at + n + 2) / 127.0F) : hasFace ? face[2] : 1.0F;
-				int tangent = EntityFrame.tangent(nx, ny, nz, n >= 0,
-						xyz[0], xyz[1], xyz[2], uvs[0], uvs[1],
-						xyz[3], xyz[4], xyz[5], uvs[2], uvs[3],
-						xyz[6], xyz[7], xyz[8], uvs[4], uvs[5]);
-				int dst = (first + corner) * PackPipeline.Derived.STRIDE;
-				out.putFloat(dst + PackPipeline.Derived.MID_TEX, midU).putFloat(dst + PackPipeline.Derived.MID_TEX + 4, midV);
-				out.putInt(dst + PackPipeline.Derived.TANGENT, tangent);
+				long at = c0 + (long) corner * stride;
+				float nx = n >= 0 ? Math.max(-1.0F, MemoryUtil.memGetByte(at + n) / 127.0F) : hasFace ? face[0] : 0.0F;
+				float ny = n >= 0 ? Math.max(-1.0F, MemoryUtil.memGetByte(at + n + 1) / 127.0F) : hasFace ? face[1] : 0.0F;
+				float nz = n >= 0 ? Math.max(-1.0F, MemoryUtil.memGetByte(at + n + 2) / 127.0F) : hasFace ? face[2] : 1.0F;
+				if (nx != lastX || ny != lastY || nz != lastZ) {
+					tangent = EntityFrame.tangent(nx, ny, nz, flatten,
+							x0, y0, z0, u0, v0,
+							x1, y1, z1, u1, v1,
+							x2, y2, z2, u2, v2);
+					lastX = nx;
+					lastY = ny;
+					lastZ = nz;
+				}
+				MemoryUtil.memPutInt(quad + (long) corner * PackPipeline.Derived.STRIDE + PackPipeline.Derived.TANGENT, tangent);
 			}
 		}
 	}

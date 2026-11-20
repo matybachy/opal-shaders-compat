@@ -1143,7 +1143,7 @@ public final class PackRenderer implements AutoCloseable {
 		if (planned == null) return false;
 		if (planned == DROPPED) return true;
 		MeshDraw draw = MeshDraw.immediate(this.meshArena, state, vertices, indices, ids,
-				planned.program().pipeline().readsDerived(), RenderSystem.getShaderLineWidth());
+				planned.program().pipeline().derivedReads(), RenderSystem.getShaderLineWidth());
 		if (draw != null) submitMesh(planned, draw, true);
 		return true;
 	}
@@ -1157,14 +1157,15 @@ public final class PackRenderer implements AutoCloseable {
 		}
 		// Every run first, so that one VulkanMod has to draw leaves the whole batch to it.
 		List<PlannedMesh> plans = new ArrayList<>(runs.size());
-		boolean derive = false;
+		// One stream serves every run, so it holds what any of their programs reads.
+		int derive = 0;
 		for (MixedMesh.Run run : runs) {
 			PlannedMesh planned = planMesh(shader, state.format(), state.mode(),
 					run.blockEntity() ? Families.Phase.BLOCK_ENTITIES : Families.Phase.LEVEL,
 					RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix());
 			if (planned == null) return false;
 			plans.add(planned);
-			derive |= planned != DROPPED && planned.program().pipeline().readsDerived();
+			if (planned != DROPPED) derive |= planned.program().pipeline().derivedReads();
 		}
 		MeshDraw whole = MeshDraw.immediate(this.meshArena, state, mesh.vertexBuffer(), null, ids, derive,
 				RenderSystem.getShaderLineWidth());
