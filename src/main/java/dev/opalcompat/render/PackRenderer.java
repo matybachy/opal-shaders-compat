@@ -268,7 +268,8 @@ public final class PackRenderer implements AutoCloseable {
 			ChainPlan.Families families = new ChainPlan.Families(terrainMesh, true, true, false);
 			this.chain = PackProgram.loadChain(this.opened, dimension, ChainFilter.ALL, families);
 			this.terrain = terrainMesh
-					? PackProgram.loadTerrain(this.opened, this.chain.place(), VertexInputs.TERRAIN)
+					? readingAfterDeferred(PackProgram.loadTerrain(this.opened, this.chain.place(), VertexInputs.TERRAIN),
+							this.chain)
 					: null;
 			if (compiler == null) compiler = new SpirvCompiler();
 			this.meshPrograms = new MeshPrograms(this.opened, this.chain, this.values, compiler);
@@ -1353,6 +1354,32 @@ public final class PackRenderer implements AutoCloseable {
 		light.turnOffLightLayer();
 		VulkanImage atlas = glImage(minecraft.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getId());
 		return new GameImages(atlas, lightmap, null);
+	}
+
+	/**
+	 * The chunk programs, the translucent pass reading the halves the deferred stage leaves, as it writes them.
+	 * <p>
+	 * {@code loadTerrain} binds each program by its file, and the schedule places every {@code gbuffers} file with
+	 * the opaque world, before the deferreds. The translucent pass is drawn after them ({@link TerrainPass#afterDeferred},
+	 * {@code flippedAfterTranslucent} in Iris) and its attachments are already taken there ({@code ChainPlan.geometryOf}),
+	 * so its reads have to be too, the way {@link MeshPrograms} and {@link DistantPrograms} bind theirs. Read from the
+	 * half before, Complementary's {@code gbuffers_water} took the clouds' depth from the {@code gaux2} composite1 left
+	 * the frame before rather than the one deferred1 had just written: r5.9 copied that depth there, r5.10 writes its
+	 * light shaft factor instead, mostly nought, and the cloud test then threw away every pixel of water, ice and glass.
+	 */
+	private static PackProgram.Terrain readingAfterDeferred(PackProgram.Terrain terrain, PackProgram.Chain chain) {
+		TargetSchedule schedule = chain.targets().schedule();
+		Map<TerrainPass, PackProgram.Loaded> programs = new EnumMap<>(TerrainPass.class);
+		terrain.programs().forEach((pass, loaded) -> {
+			if (!pass.afterDeferred()) {
+				programs.put(pass, loaded);
+				return;
+			}
+			String served = loaded.path().substring(loaded.path().lastIndexOf('/') + 1);
+			Optional<TargetSchedule.Bound> step = schedule.stepAfterDeferred(served);
+			programs.put(pass, step.isPresent() ? loaded.rebind(chain.targets(), step) : loaded);
+		});
+		return new PackProgram.Terrain(programs, terrain.carried());
 	}
 
 	/** What the pack's {@code blend.<program>} directives ask for, per attachment. */
